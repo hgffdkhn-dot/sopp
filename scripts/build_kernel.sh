@@ -75,6 +75,14 @@ scripts/config --set-str CONFIG_LOCALVERSION "-g844fd19c6"
 scripts/config --enable CONFIG_KPROBES
 scripts/config --enable CONFIG_KPROBE_EVENTS
 scripts/config --enable CONFIG_KRETPROBES
+# This OSS tree ships without security/selinux/audit.c, so its hooks.c cannot
+# resolve the audit LSM callbacks when CONFIG_AUDIT is on. The vendor tree has
+# that file; ours does not. Audit is irrelevant to s0ppSU (which only uses the
+# stable security_secctx_to_secid API), so disable it to keep the tree whole.
+scripts/config --disable CONFIG_AUDIT
+scripts/config --disable CONFIG_AUDITSYSCALL
+scripts/config --disable CONFIG_AUDIT_WATCH
+scripts/config --disable CONFIG_AUDIT_TREE
 make ARCH=arm64 $CROSS olddefconfig
 
 echo "=== effective config ==="
