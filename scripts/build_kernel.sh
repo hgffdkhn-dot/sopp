@@ -40,10 +40,22 @@ for d, _, fs in os.walk(root):
         if not f.endswith(".h"):
             continue
         src = os.path.join(d, f)
-        dst = os.path.join(out, f)
-        if not os.path.lexists(dst):
+        # Flat link for bare <foo.h> includes.
+        flat = os.path.join(out, f)
+        if not os.path.lexists(flat):
             try:
-                os.symlink(src, dst)
+                os.symlink(src, flat)
+            except OSError:
+                pass
+        # Mirrored path for <subdir/foo.h> includes. Recreate the path
+        # relative to the source root (e.g. mi_disp/mi_disp_feature_id.h).
+        rel = os.path.relpath(src, root)
+        mirror = os.path.join(out, rel)
+        mdir = os.path.dirname(mirror)
+        if not os.path.lexists(mirror):
+            try:
+                os.makedirs(mdir, exist_ok=True)
+                os.symlink(src, mirror)
             except OSError:
                 pass
 PY
