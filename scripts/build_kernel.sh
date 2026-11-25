@@ -81,24 +81,48 @@ clang-14 --version | head -1
 # live in one place; CI checkout only, upstream untouched.
 bash "$REPO/scripts/patch_kernel_tree.sh" "$KDIR"
 
-# 1) Base config is the exact config read from the device (/proc/config.gz).
-cp "$CFG" .config
+# 1) Base config: the tree's OWN vendor defconfig, NOT the device's runtime
+#    /proc/config.gz. The device config carries ~4500 options (vendor-private
+#    MTK/Xiaomi symbols this trimmed OSS tree has no Kconfig or code for);
+#    feeding it in makes olddefconfig cascade into broken dependency states.
+#    ares_user_defconfig is what the vendor actually built this tree with: it
+#    expands to ~1694 options and differs from the device config in only 72
+#    entries, all vendor-private. It already enables KPROBES + SELinux + AUDIT
+#    + MODVERSIONS, which is exactly what s0ppSU needs.
+make ARCH=arm64 $CROSS ares_user_defconfig
 
-# 2) Turn kprobes on (the original kernel had it off), and pin the version
-#    suffix so vermagic stays 4.14.186-g844fd19c6 on the flashed device.
+# 2) Adjustments on top of the vendor baseline.
+#    - KSU: the tree has a throwaway KernelSU integration that also gates on
+#      prctl. Drop it so it cannot fight s0ppSU for the same prctl channel.
+#    - LOCALVERSION: pin to the device's exact release string so the built
+#      kernel and its modules both carry vermagic 4.14.186-g844fd19c6 and can
+#      load each other (and any module already on /vendor).
+#    - KPROBES: already on in the defconfig; re-assert for safety.
+#    - STACKPROTECTOR_STRONG: the tree's cc-option probe fails on the Actions
+#      toolchain and aborts the build; s0ppSU does not depend on it.
+scripts/config --disable CONFIG_KSU
 scripts/config --disable CONFIG_LOCALVERSION_AUTO
 scripts/config --set-str CONFIG_LOCALVERSION "-g844fd19c6"
 scripts/config --enable CONFIG_KPROBES
 scripts/config --enable CONFIG_KPROBE_EVENTS
 scripts/config --enable CONFIG_KRETPROBES
-# The tree's compiler check for STACKPROTECTOR_STRONG is unreliable under the
-# Actions toolchain; s0ppSU does not depend on it.
 scripts/config --disable CONFIG_CC_STACKPROTECTOR_STRONG
 scripts/config --enable CONFIG_CC_STACKPROTECTOR_NONE
+# The 5 =m modules in the vendor defconfig are all generic (IKHEADERS, TCP
+# congestion controls, bridge netfilter, LCD class). Fold them into the image
+# so a freshly flashed kernel never asks for out-of-tree .ko files whose
+# version no longer matches.
+scripts/config --enable CONFIG_IKHEADERS
+scripts/config --enable CONFIG_TCP_CONG_WESTWOOD
+scripts/config --enable CONFIG_TCP_CONG_HTCP
+scripts/config --enable CONFIG_BRIDGE_NETFILTER
+scripts/config --enable CONFIG_LCD_CLASS_DEVICE
 make ARCH=arm64 $CROSS olddefconfig
 
 echo "=== effective config ==="
-grep -E '^CONFIG_(LOCALVERSION|KPROBES|MODVERSIONS|PREEMPT|SMP|MODULES|MODULE_UNLOAD|AUDIT)=' .config
+grep -E '^CONFIG_(LOCALVERSION|KPROBES|KRETPROBES|MODVERSIONS|PREEMPT|SMP|MODULES|MODULE_UNLOAD|AUDIT|SECURITY_SELINUX)=' .config
+echo "=== leftover =m modules (should be none) ==="
+grep '=m$' .config | head
 
 # 3) Prepare headers/Module.symvers for the external module build.
 make ARCH=arm64 $CROSS -j"$(nproc)" modules_prepare
