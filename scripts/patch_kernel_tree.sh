@@ -45,8 +45,10 @@ int selinux_audit_rule_known(struct audit_krule *krule)
 }
 EOF
 
-# Link the new file into the SELinux object list.
-sed -i '/^selinux-y :=/a selinux-$(CONFIG_AUDIT) += audit.o' \
+# Link the new file into the SELinux object list. Insert after the xfrm.o
+# line (a complete, non-continued line) so the selinux-y backslash chain
+# above it stays intact.
+sed -i '/selinux-\$(CONFIG_SECURITY_NETWORK_XFRM) += xfrm.o/a selinux-$(CONFIG_AUDIT) += audit.o' \
   "$KDIR/security/selinux/Makefile"
 
 echo "patched: audit.c added and wired into selinux-y"
