@@ -41,10 +41,15 @@ CROSS="CROSS_COMPILE=aarch64-linux-gnu-"
 INC=$(python3 - "$KDIR" <<'PY'
 import os, re, sys
 root = sys.argv[1]
-TOPS = ["arch/arm64", "drivers", "sound", "fs", "net", "security",
-        "kernel", "mm", "block", "crypto", "lib", "init", "ipc"]
-pat = re.compile(r'^\s*#\s*include\s*<([^>]+\.h)>', re.M)
-refs = {}
+# Only the trees the vendor trimmed need help. fs/, net/ and security/ are
+# intact upstream subsystems whose Makefiles already set up their own include
+# paths; adding their directories here would put e.g. fs/ocfs2/file.h on the
+# search path and hijack legitimate <file.h> references.
+TOPS = ["arch/arm64", "drivers", "sound"]
+angle = re.compile(r'^\s*#\s*include\s*<([^>\n]+\.h)>', re.M)
+quote = re.compile(r'^\s*#\s*include\s*"([^"\n]+\.h)"', re.M)
+
+angles, quotes = {}, {}
 for top in TOPS:
     base = os.path.join(root, top)
     if not os.path.isdir(base):
@@ -59,8 +64,10 @@ for top in TOPS:
                 txt = open(os.path.join(d, f), errors="ignore").read()
             except OSError:
                 continue
-            for m in pat.finditer(txt):
-                refs.setdefault(m.group(1), set()).add(d)
+            for m in angle.finditer(txt):
+                angles.setdefault(m.group(1), set()).add(d)
+            for m in quote.finditer(txt):
+                quotes.setdefault(m.group(1), set()).add(d)
 
 index = {}
 for top in TOPS:
@@ -74,16 +81,33 @@ for top in TOPS:
             if f.endswith(".h"):
                 index.setdefault(f, set()).add(d)
 
+def cands_for(h):
+    if "/" in h:
+        return set()
+    return index.get(h, set())
+
 dirs = set()
-for h, srcs in refs.items():
-    cands = index.get(h, set())
-    if not cands:
+# Angle brackets: the compiler never looks in the source dir, so a header that
+# any includer keeps as a sibling needs that sibling dir on the path. A header
+# referenced from elsewhere is only safe to add when it is unique in the tree.
+for h, srcs in angles.items():
+    c = cands_for(h)
+    if not c:
         continue
-    same = srcs & cands          # including file lives with the header
+    same = srcs & c
     if same:
         dirs |= same
-    elif len(cands) == 1:        # unique in the tree: unambiguous
-        dirs |= cands
+    if (srcs - c) and len(c) == 1:
+        dirs |= c
+# Quotes: the compiler already searches the includer's own directory, so the
+# sibling case needs nothing. Only an includer living elsewhere matters, and
+# only when the header has a single home (otherwise the choice is ambiguous).
+for h, srcs in quotes.items():
+    c = cands_for(h)
+    if not c:
+        continue
+    if (srcs - c) and len(c) == 1:
+        dirs |= c
 print(" ".join("-idirafter" + d for d in sorted(dirs)))
 PY
 )
@@ -126,15 +150,16 @@ scripts/config --enable CONFIG_KPROBE_EVENTS
 scripts/config --enable CONFIG_KRETPROBES
 scripts/config --disable CONFIG_CC_STACKPROTECTOR_STRONG
 scripts/config --enable CONFIG_CC_STACKPROTECTOR_NONE
-# The 5 =m modules in the vendor defconfig are all generic (IKHEADERS, TCP
-# congestion controls, bridge netfilter, LCD class). Fold them into the image
-# so a freshly flashed kernel never asks for out-of-tree .ko files whose
-# version no longer matches.
-scripts/config --enable CONFIG_IKHEADERS
+# The 5 =m modules in the vendor defconfig are all generic (TCP congestion
+# controls, bridge netfilter, LCD class). Fold them into the image so a freshly
+# flashed kernel never asks for out-of-tree .ko files whose version no longer
+# matches. IKHEADERS is excluded on purpose: it is a debug-only eBPF header
+# bundle whose packaging step shells out to an unset $cpio and breaks the build.
 scripts/config --enable CONFIG_TCP_CONG_WESTWOOD
 scripts/config --enable CONFIG_TCP_CONG_HTCP
 scripts/config --enable CONFIG_BRIDGE_NETFILTER
 scripts/config --enable CONFIG_LCD_CLASS_DEVICE
+scripts/config --disable CONFIG_IKHEADERS
 make ARCH=arm64 $CROSS olddefconfig
 
 echo "=== effective config ==="
