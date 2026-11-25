@@ -47,17 +47,26 @@ for d, _, fs in os.walk(root):
                 os.symlink(src, flat)
             except OSError:
                 pass
-        # Mirrored path for <subdir/foo.h> includes. Recreate the path
-        # relative to the source root (e.g. mi_disp/mi_disp_feature_id.h).
-        rel = os.path.relpath(src, root)
-        mirror = os.path.join(out, rel)
-        mdir = os.path.dirname(mirror)
-        if not os.path.lexists(mirror):
-            try:
-                os.makedirs(mdir, exist_ok=True)
-                os.symlink(src, mirror)
-            except OSError:
-                pass
+        # Mirrored paths for <subdir/foo.h> includes. A header may be
+        # referenced relative to different ancestor directories (e.g.
+        # <mi_disp/foo.h> from drm/mediatek/), so link the last 2-4 path
+        # components as well as the full path from source root.
+        parts = os.path.relpath(src, root).split(os.sep)  # e.g. drivers/gpu/drm/mediatek/mi_disp/foo.h
+        variants = set()
+        for n in range(1, min(5, len(parts))):  # trailing dirs + filename
+            variants.add(os.sep.join(parts[-(n+1):]))
+        # full path under drivers/ and under kernel root
+        variants.add(os.sep.join(parts))
+        if parts[0] == "drivers":
+            variants.add(os.sep.join(parts[1:]))
+        for v in variants:
+            mirror = os.path.join(out, v)
+            if not os.path.lexists(mirror):
+                try:
+                    os.makedirs(os.path.dirname(mirror), exist_ok=True)
+                    os.symlink(src, mirror)
+                except OSError:
+                    pass
 PY
 INC="-idirafter$FALLBACK"
 # -Wno-error: modern Clang emits warnings (strict-prototypes, format) that
