@@ -83,7 +83,7 @@ jobs:
           mkdir -p dist
           cp out/soppsu.ko dist/
           cp out/soppctl dist/
-          cp out/Image.gz-dtb dist/
+          cp out/Image.gz dist/
           cp flashable/soppSU-kernel-ares.zip dist/
           cp apk-out/s0ppSU-v1.2.0.apk dist/
           ls -lh dist/

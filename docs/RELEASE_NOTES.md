@@ -13,7 +13,7 @@
 | `soppsu.ko` | 内核模块，可独立 insmod 热加载，也可随内核内置 |
 | `s0ppSU-v1.2.0.apk` | Kotlin 管理器，含 Root 探测 + 热启动 |
 | `soppctl` | 用户态 AArch64 命令行工具 |
-| `Image.gz-dtb` | 裸内核镜像（进阶用途） |
+| `Image.gz` | 裸内核镜像；dtb 保留原机（进阶用途） |
 
 ## 刷入步骤
 

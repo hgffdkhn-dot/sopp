@@ -87,9 +87,11 @@ make ARCH=arm64 $CROSS -C "$KDIR" \
      M="$REPO/kernel" CONFIG_SOPP_SU=m modules
 cp "$REPO/kernel/soppsu.ko" "$OUT/soppsu.ko"
 
-# 5) Kernel image with appended dtb (non-GKI 4.14 layout).
-make ARCH=arm64 $CROSS -j"$(nproc)" Image.gz-dtb
-cp arch/arm64/boot/Image.gz-dtb "$OUT/Image.gz-dtb"
+# 5) Kernel image only. The OSS tree is missing vendor-private DTS overlays
+#    (k6893v1_64/cust.dtsi), so dtbs cannot be rebuilt here. AnyKernel3 will
+#    flash only the kernel and keep the device's original dtb partition.
+make ARCH=arm64 $CROSS -j"$(nproc)" Image.gz
+cp arch/arm64/boot/Image.gz "$OUT/Image.gz"
 
 # 6) Static userspace client.
 aarch64-linux-gnu-gcc -O2 -static -o "$OUT/soppctl" "$REPO/userspace/soppctl.c"

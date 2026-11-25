@@ -52,3 +52,11 @@ print("hooks.c: XFRM calls stubbed, audit hook registrations removed")
 PY
 
 echo "patched: selinux hooks.c made self-contained"
+
+# Focaltech touch driver includes a sample firmware blob that the OSS drop
+# omits (header itself says it is a placeholder to be replaced by vendor).
+# Provide an empty C array so it compiles; real firmware lives in vendor.
+FT_DIR="$KDIR/drivers/input/touchscreen/focaltech_spi/include/firmware"
+mkdir -p "$FT_DIR"
+[ -f "$FT_DIR/fw_sample.i" ] || printf '/* s0ppSU CI stub: vendor firmware is in /vendor/firmware */\n' > "$FT_DIR/fw_sample.i"
+echo "patched: focaltech firmware stub created"
