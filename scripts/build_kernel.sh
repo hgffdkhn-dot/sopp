@@ -29,10 +29,14 @@ INC_DIRS=(
   drivers/clk/mediatek
   drivers/cpuidle
   drivers/devfreq/helio-dvfsrc-v3
+  drivers/extcon/mediatek
 )
 INC=""
 for d in "${INC_DIRS[@]}"; do INC="$INC -I$KDIR/$d"; done
-export KCFLAGS="${INC}${KCFLAGS:+ $KCFLAGS}"
+# This 4.14 tree declares ksm_flock() as plain `inline` in a header but
+# defines it in a .c file. Modern C99 semantics reject that at call sites;
+# GNU89 semantics (as the original toolchain used) emit an external call.
+export KCFLAGS="${INC} -fgnu89-inline ${KCFLAGS:+ $KCFLAGS}"
 
 echo "=== compiler ==="
 clang-14 --version | head -1
