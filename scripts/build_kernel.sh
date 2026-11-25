@@ -13,11 +13,23 @@ CFG="$REPO/config/device.config"
 
 cd "$KDIR"
 
-# Legacy MTK 4.14 drivers use angle-bracket includes for headers sitting next
-# to them (e.g. <clk-mux.h>, <dt_idle_states.h>). Old GCC searched the source
-# dir implicitly; modern GCC does not. Inject those dirs without touching the
-# upstream source tree.
-export KCFLAGS="-I$KDIR/drivers/clk/mediatek -I$KDIR/drivers/cpuidle ${KCFLAGS:-}"
+# This 4.14 tree is built upstream with Clang (see build.config.mtk.aarch64:
+# CC=clang). GCC's C99 inline semantics break legacy code here (e.g.
+# ksm_flock always_inline), so compile with Clang to match upstream.
+# CROSS_COMPILE still supplies GNU binutils; CLANG_TRIPLE targets aarch64.
+export CC=clang-14
+export CLANG_TRIPLE=aarch64-linux-gnu-
+CROSS="CROSS_COMPILE=aarch64-linux-gnu-"
+
+# Legacy MTK drivers include sibling headers with angle brackets
+# (<clk-mux.h>, <dt_idle_states.h>, <helio-dvfsrc-qos.h>, ...). Modern
+# compilers no longer search the source dir implicitly. Inject every driver
+# directory once, without touching the upstream source tree.
+DRV_INCLUDES=$(find "$KDIR/drivers" -type d -printf '-I%p ' 2>/dev/null)
+export KCFLAGS="${DRV_INCLUDES} ${KCFLAGS:-}"
+
+echo "=== compiler ==="
+clang-14 --version | head -1
 
 # 1) Base config is the exact config read from the device (/proc/config.gz).
 cp "$CFG" .config
@@ -29,21 +41,21 @@ scripts/config --set-str CONFIG_LOCALVERSION "-g844fd19c6"
 scripts/config --enable CONFIG_KPROBES
 scripts/config --enable CONFIG_KPROBE_EVENTS
 scripts/config --enable CONFIG_KRETPROBES
-make ARCH=arm64 olddefconfig
+make ARCH=arm64 $CROSS olddefconfig
 
 echo "=== effective config ==="
 grep -E '^CONFIG_(LOCALVERSION|KPROBES|MODVERSIONS|PREEMPT|SMP|MODULES|MODULE_UNLOAD)=' .config
 
 # 3) Prepare headers/Module.symvers for the external module build.
-make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j"$(nproc)" modules_prepare
+make ARCH=arm64 $CROSS -j"$(nproc)" modules_prepare
 
 # 4) Build the module. CONFIG_SOPP_SU=m selects obj-m in our Makefile.
-make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -C "$KDIR" \
+make ARCH=arm64 $CROSS -C "$KDIR" \
      M="$REPO/kernel" CONFIG_SOPP_SU=m modules
 cp "$REPO/kernel/soppsu.ko" "$OUT/soppsu.ko"
 
 # 5) Kernel image with appended dtb (non-GKI 4.14 layout).
-make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j"$(nproc)" Image.gz-dtb
+make ARCH=arm64 $CROSS -j"$(nproc)" Image.gz-dtb
 cp arch/arm64/boot/Image.gz-dtb "$OUT/Image.gz-dtb"
 
 # 6) Static userspace client.
