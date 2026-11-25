@@ -52,7 +52,9 @@ for d, _, fs in os.walk(os.path.join(root, "drivers")):
             if m and os.path.exists(os.path.join(d, m.group(1))):
                 dirs.add(d)
                 break
-print(" ".join("-I" + d for d in sorted(dirs)))
+# Use -idirafter (not -I): these are fallback dirs. -I would inject common-named
+# headers (queue.h etc.) ahead of the correct ones and break other drivers.
+print(" ".join("-idirafter" + d for d in sorted(dirs)))
 PY
 )
 # -Wno-error: modern Clang emits warnings (strict-prototypes, format) that
