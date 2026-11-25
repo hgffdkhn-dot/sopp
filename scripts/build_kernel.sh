@@ -70,6 +70,10 @@ scripts/config --set-str CONFIG_LOCALVERSION "-g844fd19c6"
 scripts/config --enable CONFIG_KPROBES
 scripts/config --enable CONFIG_KPROBE_EVENTS
 scripts/config --enable CONFIG_KRETPROBES
+# The tree's compiler check for STACKPROTECTOR_STRONG is unreliable under the
+# Actions toolchain; s0ppSU does not depend on it.
+scripts/config --disable CONFIG_CC_STACKPROTECTOR_STRONG
+scripts/config --enable CONFIG_CC_STACKPROTECTOR_NONE
 make ARCH=arm64 $CROSS olddefconfig
 
 echo "=== effective config ==="
