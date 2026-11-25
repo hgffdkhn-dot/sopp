@@ -86,7 +86,7 @@ make ARCH=arm64 $CROSS olddefconfig
 # olddefconfig may re-enable options via dependencies; re-assert XFRM off and
 # sync generated headers without another full reorder.
 scripts/config --disable CONFIG_SECURITY_NETWORK_XFRM
-make ARCH=arm64 $CROSS syncconfig
+yes '' | make ARCH=arm64 $CROSS oldconfig >/dev/null
 
 echo "=== effective config ==="
 grep -E '^CONFIG_(LOCALVERSION|KPROBES|MODVERSIONS|PREEMPT|SMP|MODULES|MODULE_UNLOAD|SECURITY_NETWORK_XFRM|AUDIT)=' .config
