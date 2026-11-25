@@ -65,6 +65,10 @@ clang-14 --version | head -1
 # matches what the original toolchain emitted. Upstream source is untouched.
 sed -i 's/^inline void ksm_flock(/void ksm_flock(/' include/linux/keyslot-manager.h
 
+# Patch the trimmed OSS tree so it builds standalone (adds the missing
+# selinux/audit.c and wires it in). CI checkout only; upstream untouched.
+bash "$REPO/scripts/patch_kernel_tree.sh" "$KDIR"
+
 # 1) Base config is the exact config read from the device (/proc/config.gz).
 cp "$CFG" .config
 
@@ -75,18 +79,17 @@ scripts/config --set-str CONFIG_LOCALVERSION "-g844fd19c6"
 scripts/config --enable CONFIG_KPROBES
 scripts/config --enable CONFIG_KPROBE_EVENTS
 scripts/config --enable CONFIG_KRETPROBES
-# This OSS tree ships without security/selinux/audit.c, so its hooks.c cannot
-# resolve the audit LSM callbacks when CONFIG_AUDIT is on. The vendor tree has
-# that file; ours does not. Audit is irrelevant to s0ppSU (which only uses the
-# stable security_secctx_to_secid API), so disable it to keep the tree whole.
-scripts/config --disable CONFIG_AUDIT
-scripts/config --disable CONFIG_AUDITSYSCALL
-scripts/config --disable CONFIG_AUDIT_WATCH
-scripts/config --disable CONFIG_AUDIT_TREE
+# Keep SELinux XFRM off — do not let olddefconfig re-enable it. With it off,
+# xfrm.h supplies static-inline stubs for all selinux_xfrm_* callbacks.
+scripts/config --disable CONFIG_SECURITY_NETWORK_XFRM
 make ARCH=arm64 $CROSS olddefconfig
+# olddefconfig may re-enable options via dependencies; re-assert XFRM off and
+# sync generated headers without another full reorder.
+scripts/config --disable CONFIG_SECURITY_NETWORK_XFRM
+make ARCH=arm64 $CROSS syncconfig
 
 echo "=== effective config ==="
-grep -E '^CONFIG_(LOCALVERSION|KPROBES|MODVERSIONS|PREEMPT|SMP|MODULES|MODULE_UNLOAD)=' .config
+grep -E '^CONFIG_(LOCALVERSION|KPROBES|MODVERSIONS|PREEMPT|SMP|MODULES|MODULE_UNLOAD|SECURITY_NETWORK_XFRM|AUDIT)=' .config
 
 # 3) Prepare headers/Module.symvers for the external module build.
 make ARCH=arm64 $CROSS -j"$(nproc)" modules_prepare
