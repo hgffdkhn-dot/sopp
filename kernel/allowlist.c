@@ -39,6 +39,28 @@ struct work_struct sopp_save_work;
 static struct sopp_root_profile default_root_profile;
 static struct sopp_non_root_profile default_non_root_profile;
 
+/*
+ * 4.14's kmalloc()/kzalloc() are __always_inline helpers that, when the size
+ * is a compile-time constant (which sizeof() always is), dereference
+ * kmalloc_caches[] directly instead of calling __kmalloc(). kmalloc_caches is
+ * not EXPORT_SYMBOL'd, so any module built that way stays loadable but fails
+ * at insmod time with an unresolved symbol. Routing through __kmalloc() (which
+ * is exported) keeps the size a runtime value and avoids the reference.
+ */
+static void *sopp_kmalloc(size_t size, gfp_t gfp)
+{
+	return __kmalloc(size, gfp);
+}
+
+static void *sopp_kzalloc(size_t size, gfp_t gfp)
+{
+	void *p = __kmalloc(size, gfp);
+
+	if (p)
+		memset(p, 0, size);
+	return p;
+}
+
 /* Fast membership test. Protected by allowlist_mutex on writers only. */
 static u32 allow_uid_bitmap[PAGE_SIZE / sizeof(u32)] __read_mostly __aligned(PAGE_SIZE);
 
@@ -98,7 +120,7 @@ struct sopp_root_profile *sopp_get_root_profile(uid_t uid)
 	struct sopp_root_profile *profile;
 	struct sopp_perm_entry *entry;
 
-	profile = kmalloc(sizeof(*profile), GFP_ATOMIC);
+	profile = sopp_kmalloc(sizeof(*profile), GFP_ATOMIC);
 	if (!profile)
 		return &default_root_profile;
 
@@ -172,7 +194,7 @@ bool sopp_set_app_profile(const struct sopp_app_profile *profile, bool persist)
 	mutex_lock(&allowlist_mutex);
 	entry = find_entry(profile->current_uid);
 	if (!entry) {
-		entry = kzalloc(sizeof(*entry), GFP_KERNEL);
+		entry = sopp_kzalloc(sizeof(*entry), GFP_KERNEL);
 		if (!entry) {
 			mutex_unlock(&allowlist_mutex);
 			return false;
@@ -198,7 +220,7 @@ void sopp_allow_uid(uid_t uid)
 	mutex_lock(&allowlist_mutex);
 	entry = find_entry(uid);
 	if (!entry) {
-		entry = kzalloc(sizeof(*entry), GFP_KERNEL);
+		entry = sopp_kzalloc(sizeof(*entry), GFP_KERNEL);
 		if (entry) {
 			entry->profile.current_uid = uid;
 			entry->profile.version = SOPP_APP_PROFILE_VER;
@@ -220,7 +242,7 @@ void sopp_deny_uid(uid_t uid)
 	mutex_lock(&allowlist_mutex);
 	entry = find_entry(uid);
 	if (!entry) {
-		entry = kzalloc(sizeof(*entry), GFP_KERNEL);
+		entry = sopp_kzalloc(sizeof(*entry), GFP_KERNEL);
 		if (entry) {
 			entry->profile.current_uid = uid;
 			entry->profile.version = SOPP_APP_PROFILE_VER;

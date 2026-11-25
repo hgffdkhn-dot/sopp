@@ -124,21 +124,41 @@ grep -E '^CONFIG_(LOCALVERSION|KPROBES|KRETPROBES|MODVERSIONS|PREEMPT|SMP|MODULE
 echo "=== leftover =m modules (should be none) ==="
 grep '=m$' .config || echo "(none)"
 
-# 3) Prepare headers/Module.symvers for the external module build.
+# 3) Prepare headers.
 make ARCH=arm64 $CROSS -j"$(nproc)" modules_prepare
 
-# 4) Build the module. CONFIG_SOPP_SU=m selects obj-m in our Makefile.
+# 4) Build the kernel image FIRST. The order matters: Module.symvers is only
+#    complete once vmlinux has been linked. Building the module before that
+#    yields a .ko whose __versions CRCs are all zero, which loads but then
+#    fails with "disagrees about version of symbol" on a MODVERSIONS kernel.
+#    The OSS tree lacks vendor-private DTS overlays (k6893v1_64/cust.dtsi), so
+#    we build the image only and let AnyKernel3 keep the device's stock dtb.
+make ARCH=arm64 $CROSS -j"$(nproc)" Image.gz
+cp arch/arm64/boot/Image.gz "$OUT/Image.gz"
+
+# 5) Now that Module.symvers is complete, build the external module.
 make ARCH=arm64 $CROSS -C "$KDIR" \
      M="$REPO/kernel" CONFIG_SOPP_SU=m modules
 cp "$REPO/kernel/soppsu.ko" "$OUT/soppsu.ko"
 
-# 5) Kernel image only. The OSS tree is missing vendor-private DTS overlays
-#    (k6893v1_64/cust.dtsi), so dtbs cannot be rebuilt here. AnyKernel3 will
-#    flash only the kernel and keep the device's original dtb partition.
-make ARCH=arm64 $CROSS -j"$(nproc)" Image.gz
-cp arch/arm64/boot/Image.gz "$OUT/Image.gz"
+# 6) Fail loudly if the module still references anything the kernel does not
+#    export. modpost only warns about these; the module then dies at insmod
+#    time with a misleading ENOENT. Catch it here instead.
+echo "=== undefined symbols in soppsu.ko ==="
+nm -u "$OUT/soppsu.ko" | awk '{print $2}' | grep -v '^$' | sort -u > /tmp/sopp-undef.txt
+missing=""
+while read -r sym; do
+  [ -z "$sym" ] && continue
+  awk -v s="$sym" '$2 == s { found = 1; exit } END { exit !found }' \
+      "$KDIR/Module.symvers" || missing="$missing $sym"
+done < /tmp/sopp-undef.txt
+if [ -n "$missing" ]; then
+  echo "ERROR: module references non-exported symbols:$missing"
+  exit 1
+fi
+echo "all $(wc -l < /tmp/sopp-undef.txt) undefined symbols are exported by the kernel"
 
-# 6) Static userspace client.
+# 7) Static userspace client.
 aarch64-linux-gnu-gcc -O2 -static -o "$OUT/soppctl" "$REPO/userspace/soppctl.c"
 
 echo "=== built artifacts ==="
