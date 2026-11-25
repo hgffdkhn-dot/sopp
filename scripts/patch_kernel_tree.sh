@@ -1,61 +1,43 @@
 #!/usr/bin/env bash
 # Make the pinned OSS tree self-contained for a standalone build.
-# The Xiaomi OSS drop is trimmed: security/selinux/audit.c is missing, yet
-# hooks.c registers audit LSM hooks. The vendor kernel has this file; the
-# open drop does not. We add a minimal, behaviour-correct implementation.
-# Only the CI checkout is touched — upstream source is never modified.
+# The Xiaomi OSS drop is trimmed: security/selinux/audit.c is missing and the
+# XFRM LSM objects are not buildable standalone. hooks.c still references
+# those callbacks. The vendor kernel carries the missing pieces; ours does not.
+# We neutralize only those unbuildable, device-disabled callbacks in the CI
+# checkout. Upstream source is never modified.
 set -euo pipefail
 KDIR=${1:?usage: patch_kernel_tree.sh <kernel-src>}
 
-cat > "$KDIR/security/selinux/audit.c" <<'EOF'
-// SPDX-License-Identifier: GPL-2.0
-/*
- * Minimal SELinux audit LSM callbacks.
- * The Xiaomi OSS tree omits audit.c while hooks.c still registers these
- * callbacks under CONFIG_AUDIT. These stubs satisfy that registration;
- * audit rule evaluation is not used by s0ppSU.
- */
-#include <linux/audit.h>
-#include <linux/fs.h>
-#include <linux/init.h>
-#include <linux/kernel.h>
-#include <linux/security.h>
-#include <linux/slab.h>
+python3 - "$KDIR/security/selinux/hooks.c" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8", errors="surrogateescape").read()
 
-#include "audit.h"
+# Equivalent stubs for XFRM callbacks (device has CONFIG_SECURITY_NETWORK_XFRM
+# off; these are no-ops in that configuration anyway).
+repls = [
+    ("netlbl_enabled() || selinux_xfrm_enabled()",
+     "netlbl_enabled()"),
+    ("err = selinux_xfrm_skb_sid(skb, &xfrm_sid);",
+     "err = 0;"),
+    ("err = selinux_xfrm_sock_rcv_skb(sksec->sid, skb, &ad);",
+     "err = 0;"),
+    ("if (selinux_xfrm_postroute_last(sksec->sid, skb, &ad, proto))",
+     "if (0)"),
+    # Audit LSM callbacks: their implementation file is absent from the OSS
+    # tree. Drop the registrations under CONFIG_AUDIT.
+    ("\tLSM_HOOK_INIT(audit_rule_init, selinux_audit_rule_init),\n"
+     "\tLSM_HOOK_INIT(audit_rule_known, selinux_audit_rule_known),\n"
+     "\tLSM_HOOK_INIT(audit_rule_match, selinux_audit_rule_match),\n"
+     "\tLSM_HOOK_INIT(audit_rule_free, selinux_audit_rule_free),\n", ""),
+]
+for old, new in repls:
+    if old not in s:
+        sys.stderr.write("WARN: pattern not found: %r\n" % old[:60])
+    s = s.replace(old, new)
 
-int selinux_audit_rule_init(u32 field, u32 op, char *rulestr, void **rule)
-{
-	return -ENOTSUPP;
-}
+open(p, "w", encoding="utf-8", errors="surrogateescape").write(s)
+print("hooks.c: XFRM calls stubbed, audit hook registrations removed")
+PY
 
-void selinux_audit_rule_free(void *rule)
-{
-}
-
-int selinux_audit_rule_match(u32 sid, u32 field, u32 op, void *rule,
-			     struct audit_context *actx)
-{
-	return 0;
-}
-
-int selinux_audit_rule_known(struct audit_krule *krule)
-{
-	return 0;
-}
-EOF
-
-# Link the new file into the SELinux object list. Insert after the xfrm.o
-# line (a complete, non-continued line) so the selinux-y backslash chain
-# above it stays intact.
-sed -i '/selinux-\$(CONFIG_SECURITY_NETWORK_XFRM) += xfrm.o/a selinux-$(CONFIG_AUDIT) += audit.o' \
-  "$KDIR/security/selinux/Makefile"
-
-# Force the SELinux XFRM stubs on. This trimmed tree cannot build xfrm.o
-# standalone; the device never enabled XFRM either. Making the #ifdef false
-# selects xfrm.h's existing static-inline stubs unconditionally, so hooks.c
-# resolves every selinux_xfrm_* call with no external object needed.
-sed -i 's/^#ifdef CONFIG_SECURITY_NETWORK_XFRM$/#if 0/' \
-  "$KDIR/security/selinux/include/xfrm.h"
-
-echo "patched: audit.c added, selinux-y wired, XFRM stubs forced"
+echo "patched: selinux hooks.c made self-contained"
