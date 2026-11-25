@@ -8,6 +8,15 @@
 set -euo pipefail
 KDIR=${1:?usage: patch_kernel_tree.sh <kernel-src>}
 
+# Modern Clang flags style/format issues (implicit-int, strict-prototypes,
+# format, ...) that this 2019 tree's own -Werror turns into hard errors. The
+# original toolchain emitted them as warnings. Append a global -Wno-error to
+# KBUILD_CFLAGS so it comes after the tree's -Werror assignments.
+if ! grep -q 'soppSU-WNOERROR' "$KDIR/Makefile"; then
+  printf '\n# soppSU-WNOERROR: tolerate modern Clang warnings\nKBUILD_CFLAGS += -Wno-error\n' \
+    >> "$KDIR/Makefile"
+fi
+
 python3 - "$KDIR/security/selinux/hooks.c" <<'PY'
 import sys
 p = sys.argv[1]
