@@ -54,7 +54,11 @@ for d, _, fs in os.walk(os.path.join(root, "drivers")):
                 break
 # Use -idirafter (not -I): these are fallback dirs. -I would inject common-named
 # headers (queue.h etc.) ahead of the correct ones and break other drivers.
-print(" ".join("-idirafter" + d for d in sorted(dirs)))
+# Cross-directory angle-bracket includes that the sibling scan cannot see
+# (e.g. mt_iommu.h -> <mtk_iommu_ext.h> which lives in drivers/iommu).
+extra = ["drivers/iommu", "drivers/gpu/drm/mediatek", "drivers/gpu/drm/panel"]
+all_dirs = sorted(dirs | {os.path.join(root, e) for e in extra})
+print(" ".join("-idirafter" + d for d in all_dirs))
 PY
 )
 # -Wno-error: modern Clang emits warnings (strict-prototypes, format) that
