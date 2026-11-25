@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">s0ppSU</string>
+    <string name="status_label">内核状态</string>
+    <string name="status_unknown">检测中…</string>
+    <string name="features_label">内核能力</string>
+    <string name="feature_profile">应用配置</string>
+    <string name="feature_denylist">拒绝列表</string>
+    <string name="feature_sepolicy">SELinux 策略</string>
+    <string name="feature_safemode">安全模式</string>
+    <string name="modules_label">模块</string>
+    <string name="nav_home">状态</string>
+    <string name="nav_superuser">超级用户</string>
+    <string name="nav_modules">模块</string>
+    <string name="no_apps_hint">暂无已授权应用</string>
+    <string name="app_icon_desc">应用图标</string>
+    <string name="module_hint">模块挂载与生命周期由 soppd 守护进程管理</string>
+
+    <string name="hotstart_label">热启动</string>
+    <string name="root_checking">正在检测 Root 环境…</string>
+    <string name="root_detected">已检测 Root：%1$s（%2$s）</string>
+    <string name="root_absent">未检测到可用的 Root</string>
+    <string name="hotstart_action">加载内核模块（免重启）</string>
+    <string name="hotstart_ready">设备已 Root，可加载模块启用内核门控</string>
+    <string name="hotstart_need_root">需要设备已 Root 才能热启动</string>
+    <string name="hotstart_running">正在通过 su 加载模块…</string>
+    <string name="hotstart_ok">热启动成功：%1$s</string>
+    <string name="hotstart_fail">热启动失败：%1$s</string>
+</resources>

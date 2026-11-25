@@ -1,0 +1,2 @@
+-keep class com.sopp.su.bridge.NativeBridge { *; }
+-keepclasseswithmembernames class * { native <methods>; }

@@ -1,0 +1,22 @@
+# build artifacts
+out/
+apk-out/
+flashable/
+*.ko
+*.so
+!app/app/src/main/jniLibs/**/*.so
+*.dex
+*.class
+
+# kernel source (fetched by CI)
+kernel-src/
+kernel.tar.gz
+kotlin-compiler-*.zip
+kotlinc/
+
+# local tooling
+.gradle/
+build/
+.idea/
+*.iml
+local.properties

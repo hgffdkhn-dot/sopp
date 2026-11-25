@@ -1,0 +1,92 @@
+name: build-s0ppSU
+
+# Kernel + module + manager, built entirely on GitHub Actions.
+# Nothing runs on the user's low-memory server.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            bc bison flex libssl-dev libncurses-dev cpio xz-utils \
+            zip unzip curl wget python3 openjdk-17-jdk
+
+      - name: Fetch Xiaomi ares kernel source (pinned commit)
+        run: |
+          git clone --depth 1 --filter=blob:none --no-checkout \
+            https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git kernel-src
+          cd kernel-src
+          git fetch --depth 1 origin 49c02c2de185e3e93951fdad6c4dd9caf453523a
+          git checkout 49c02c2de185e3e93951fdad6c4dd9caf453523a
+          echo "kernel source ready"
+
+      - name: Build kernel + soppsu.ko + soppctl
+        run: bash scripts/build_kernel.sh "$PWD/kernel-src" "$PWD/out" "$PWD"
+
+      - name: Pack AnyKernel3 flashable zip
+        run: bash scripts/pack_anykernel.sh "$PWD/out" "$PWD/flashable"
+
+      - name: Setup Android SDK (build-tools + platform)
+        run: |
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmdline.zip
+          mkdir -p $HOME/android-sdk/cmdline-tools
+          unzip -q cmdline.zip -d $HOME/android-sdk/cmdline-tools
+          mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest
+          export ANDROID_HOME=$HOME/android-sdk
+          export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+
+      - name: Fetch Kotlin compiler
+        run: |
+          wget -q https://github.com/JetBrains/kotlin/releases/download/v1.9.24/kotlin-compiler-1.9.24.zip
+          unzip -q kotlin-compiler-1.9.24.zip
+
+      - name: Build Kotlin manager APK
+        run: bash scripts/build_app.sh "$PWD" "$PWD/out/soppsu.ko" "$PWD/apk-out" "$PWD/kotlinc/bin/kotlinc"
+
+      - name: Verify artifacts
+        run: |
+          echo "=== ko vermagic ==="
+          readelf -p .modinfo out/soppsu.ko | grep -i vermagic
+          echo "=== ko undefined kprobe symbols (must be present) ==="
+          nm -u out/soppsu.ko | grep -E 'register_kprobe|unregister_kprobe' || true
+          echo "=== APK signature ==="
+          $ANDROID_HOME/build-tools/34.0.0/apksigner verify --verbose apk-out/s0ppSU-v1.2.0.apk | head -8
+          echo "=== APK contents ==="
+          unzip -l apk-out/s0ppSU-v1.2.0.apk | grep -E 'classes.dex|libsoppsu.so|soppsu.ko'
+
+      - name: Stage release assets
+        run: |
+          mkdir -p dist
+          cp out/soppsu.ko dist/
+          cp out/soppctl dist/
+          cp out/Image.gz-dtb dist/
+          cp flashable/soppSU-kernel-ares.zip dist/
+          cp apk-out/s0ppSU-v1.2.0.apk dist/
+          ls -lh dist/
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v1.2.0-$(date +%Y%m%d-%H%M)" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "s0ppSU v1.2.0 — KPROBES kernel + Kotlin manager" \
+            --notes-file docs/RELEASE_NOTES.md \
+            dist/*

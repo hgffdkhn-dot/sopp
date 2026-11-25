@@ -1,0 +1,12 @@
+config SOPP_SU
+	tristate "s0ppSU kernel root support"
+	depends on KPROBES
+	default n
+	help
+	  Kernel-level root management for Android. Provides a prctl door,
+	  per-UID authorisation and DenyList.
+
+config SOPP_SU_DEBUG
+	bool "s0ppSU verbose logging"
+	depends on SOPP_SU
+	default n
