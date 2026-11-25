@@ -21,46 +21,33 @@ export CC=clang-14
 export CLANG_TRIPLE=aarch64-linux-gnu-
 CROSS="CROSS_COMPILE=aarch64-linux-gnu-"
 
-# Legacy MTK drivers include sibling headers with angle brackets
-# (<clk-mux.h>, <dt_idle_states.h>, <helio-dvfsrc-qos.h>). Modern compilers no
-# longer search the source dir implicitly. Inject the known directories;
-# keep the list short so the environment size stays bounded.
-# Legacy MTK drivers include sibling headers via angle brackets
-# (<clk-mux.h>, <adsp_helper.h>, ...). Modern compilers no longer search the
-# source dir implicitly. Scan only drivers/ (NOT include/) for such cases:
-# scanning include/ would inject -I paths containing same-named headers such
-# as security.h/xfrm.h ahead of the correct ones and break SELinux.
-INC=$(python3 - "$KDIR" <<'PY'
-import os, re, sys
-root = sys.argv[1]
-pat = re.compile(r'^\s*#\s*include\s*<([^/>]+\.h)>')
-# Headers that clash with kernel-wide names; never inject their directories.
-blacklist_names = {"types.h", "sched.h", "security.h", "xfrm.h", "audit.h", "kernel.h"}
-dirs = set()
-for d, _, fs in os.walk(os.path.join(root, "drivers")):
-    if any(os.path.exists(os.path.join(d, h)) for h in blacklist_names):
+# This trimmed 4.14 tree has countless MTK drivers that include headers by
+# bare filename in angle brackets (<mtk_iommu_ext.h>, <mtk_ppm_platform.h>,
+# <adsp_helper.h>, ...). Modern compilers no longer find these. Rather than
+# inject thousands of -I dirs (arg/env length limit, and same-name collisions),
+# flatten every header in the tree into ONE directory of symlinks and add it
+# as a single -idirafter fallback. -idirafter is searched last, so it never
+# shadows the correct headers the driver Makefiles already provide.
+FALLBACK="$KDIR/.sopp-include-fallback"
+python3 - "$KDIR" "$FALLBACK" <<'PY'
+import os, sys
+root, out = sys.argv[1], sys.argv[2]
+os.makedirs(out, exist_ok=True)
+for d, _, fs in os.walk(root):
+    if out in d or "/.git" in d:
         continue
     for f in fs:
-        if not f.endswith((".c", ".h")):
+        if not f.endswith(".h"):
             continue
-        try:
-            lines = open(os.path.join(d, f), errors="ignore").read().splitlines()
-        except OSError:
-            continue
-        for ln in lines:
-            m = pat.match(ln)
-            if m and os.path.exists(os.path.join(d, m.group(1))):
-                dirs.add(d)
-                break
-# Use -idirafter (not -I): these are fallback dirs. -I would inject common-named
-# headers (queue.h etc.) ahead of the correct ones and break other drivers.
-# Cross-directory angle-bracket includes that the sibling scan cannot see
-# (e.g. mt_iommu.h -> <mtk_iommu_ext.h> which lives in drivers/iommu).
-extra = ["drivers/iommu", "drivers/gpu/drm/mediatek", "drivers/gpu/drm/panel"]
-all_dirs = sorted(dirs | {os.path.join(root, e) for e in extra})
-print(" ".join("-idirafter" + d for d in all_dirs))
+        src = os.path.join(d, f)
+        dst = os.path.join(out, f)
+        if not os.path.lexists(dst):
+            try:
+                os.symlink(src, dst)
+            except OSError:
+                pass
 PY
-)
+INC="-idirafter$FALLBACK"
 # -Wno-error: modern Clang emits warnings (strict-prototypes, format) that
 # this old tree promotes to errors; upstream used an older toolchain.
 # -fgnu89-inline: legacy `inline` decl-in-header/def-in-.c semantics.
