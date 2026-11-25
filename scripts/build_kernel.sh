@@ -25,31 +25,22 @@ CROSS="CROSS_COMPILE=aarch64-linux-gnu-"
 # (<clk-mux.h>, <dt_idle_states.h>, <helio-dvfsrc-qos.h>). Modern compilers no
 # longer search the source dir implicitly. Inject the known directories;
 # keep the list short so the environment size stays bounded.
-# Scan for directories whose .c files include a sibling header via angle
-# brackets (<foo.h> where foo.h sits in the same dir). Only those need an
-# extra -I. This yields ~80 dirs (a few KB), not the entire tree.
-INC=$(python3 - "$KDIR" <<'PY'
-import os, re, sys
-root = sys.argv[1]
-pat = re.compile(r'^\s*#\s*include\s*<([^/>]+\.h)>')
-dirs = set()
-for base in ("drivers", "include"):
-    for d, _, fs in os.walk(os.path.join(root, base)):
-        for f in fs:
-            if not f.endswith((".c", ".h")):
-                continue
-            try:
-                lines = open(os.path.join(d, f), errors="ignore").read().splitlines()
-            except OSError:
-                continue
-            for ln in lines:
-                m = pat.match(ln)
-                if m and os.path.exists(os.path.join(d, m.group(1))):
-                    dirs.add(d)
-                    break
-print(" ".join("-I" + d for d in sorted(dirs)))
-PY
-)
+# A few legacy MTK drivers include sibling headers via angle brackets
+# (<clk-mux.h>, <dt_idle_states.h>, ...). Modern compilers no longer search
+# the source dir implicitly. Only add the specific directories that need it —
+# a full-tree scan injects same-named headers (security.h, xfrm.h) ahead of the
+# correct ones and breaks SELinux includes.
+INC=""
+for d in \
+  drivers/clk/mediatek \
+  drivers/cpuidle \
+  drivers/devfreq/helio-dvfsrc-v3 \
+  drivers/extcon/mediatek \
+  drivers/iommu \
+  drivers/gpu/drm/mediatek \
+  drivers/gpu/drm/panel; do
+  INC="$INC -I$KDIR/$d"
+done
 # -Wno-error: modern Clang emits warnings (strict-prototypes, format) that
 # this old tree promotes to errors; upstream used an older toolchain.
 # -fgnu89-inline: legacy `inline` decl-in-header/def-in-.c semantics.
