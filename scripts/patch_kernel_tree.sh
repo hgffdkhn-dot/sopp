@@ -51,4 +51,11 @@ EOF
 sed -i '/selinux-\$(CONFIG_SECURITY_NETWORK_XFRM) += xfrm.o/a selinux-$(CONFIG_AUDIT) += audit.o' \
   "$KDIR/security/selinux/Makefile"
 
-echo "patched: audit.c added and wired into selinux-y"
+# Force the SELinux XFRM stubs on. This trimmed tree cannot build xfrm.o
+# standalone; the device never enabled XFRM either. Making the #ifdef false
+# selects xfrm.h's existing static-inline stubs unconditionally, so hooks.c
+# resolves every selinux_xfrm_* call with no external object needed.
+sed -i 's/^#ifdef CONFIG_SECURITY_NETWORK_XFRM$/#if 0/' \
+  "$KDIR/security/selinux/include/xfrm.h"
+
+echo "patched: audit.c added, selinux-y wired, XFRM stubs forced"

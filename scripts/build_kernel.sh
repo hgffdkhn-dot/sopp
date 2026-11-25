@@ -79,17 +79,10 @@ scripts/config --set-str CONFIG_LOCALVERSION "-g844fd19c6"
 scripts/config --enable CONFIG_KPROBES
 scripts/config --enable CONFIG_KPROBE_EVENTS
 scripts/config --enable CONFIG_KRETPROBES
-# Keep SELinux XFRM off — do not let olddefconfig re-enable it. With it off,
-# xfrm.h supplies static-inline stubs for all selinux_xfrm_* callbacks.
-scripts/config --disable CONFIG_SECURITY_NETWORK_XFRM
 make ARCH=arm64 $CROSS olddefconfig
-# olddefconfig may re-enable options via dependencies; re-assert XFRM off and
-# sync generated headers without another full reorder.
-scripts/config --disable CONFIG_SECURITY_NETWORK_XFRM
-make ARCH=arm64 $CROSS olddefconfig >/dev/null
 
 echo "=== effective config ==="
-grep -E '^CONFIG_(LOCALVERSION|KPROBES|MODVERSIONS|PREEMPT|SMP|MODULES|MODULE_UNLOAD|SECURITY_NETWORK_XFRM|AUDIT)=' .config
+grep -E '^CONFIG_(LOCALVERSION|KPROBES|MODVERSIONS|PREEMPT|SMP|MODULES|MODULE_UNLOAD|AUDIT)=' .config
 
 # 3) Prepare headers/Module.symvers for the external module build.
 make ARCH=arm64 $CROSS -j"$(nproc)" modules_prepare
