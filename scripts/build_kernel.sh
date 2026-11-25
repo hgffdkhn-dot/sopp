@@ -22,11 +22,17 @@ export CLANG_TRIPLE=aarch64-linux-gnu-
 CROSS="CROSS_COMPILE=aarch64-linux-gnu-"
 
 # Legacy MTK drivers include sibling headers with angle brackets
-# (<clk-mux.h>, <dt_idle_states.h>, <helio-dvfsrc-qos.h>, ...). Modern
-# compilers no longer search the source dir implicitly. Inject every driver
-# directory once, without touching the upstream source tree.
-DRV_INCLUDES=$(find "$KDIR/drivers" -type d -printf '-I%p ' 2>/dev/null)
-export KCFLAGS="${DRV_INCLUDES} ${KCFLAGS:-}"
+# (<clk-mux.h>, <dt_idle_states.h>, <helio-dvfsrc-qos.h>). Modern compilers no
+# longer search the source dir implicitly. Inject the known directories;
+# keep the list short so the environment size stays bounded.
+INC_DIRS=(
+  drivers/clk/mediatek
+  drivers/cpuidle
+  drivers/devfreq/helio-dvfsrc-v3
+)
+INC=""
+for d in "${INC_DIRS[@]}"; do INC="$INC -I$KDIR/$d"; done
+export KCFLAGS="${INC}${KCFLAGS:+ $KCFLAGS}"
 
 echo "=== compiler ==="
 clang-14 --version | head -1
