@@ -21,54 +21,72 @@ export CC=clang-14
 export CLANG_TRIPLE=aarch64-linux-gnu-
 CROSS="CROSS_COMPILE=aarch64-linux-gnu-"
 
-# This trimmed 4.14 tree has countless MTK drivers that include headers by
-# bare filename in angle brackets (<mtk_iommu_ext.h>, <mtk_ppm_platform.h>,
-# <adsp_helper.h>, ...). Modern compilers no longer find these. Rather than
-# inject thousands of -I dirs (arg/env length limit, and same-name collisions),
-# flatten every header in the tree into ONE directory of symlinks and add it
-# as a single -idirafter fallback. -idirafter is searched last, so it never
-# shadows the correct headers the driver Makefiles already provide.
-FALLBACK="$KDIR/.sopp-include-fallback"
-python3 - "$KDIR" "$FALLBACK" <<'PY'
-import os, sys
-root, out = sys.argv[1], sys.argv[2]
-os.makedirs(out, exist_ok=True)
-for d, _, fs in os.walk(root):
-    if out in d or "/.git" in d:
+# This trimmed 4.14 tree has MTK drivers that include their sibling headers
+# with angle brackets (<audio_ipi_dma.h>, <adsp_helper.h>, <mtk_iommu_ext.h>).
+# Modern compilers do not search the source directory for <> includes, so those
+# headers must be reachable through -idirafter.
+#
+# A flat symlink farm of every header was tried first and is wrong: it pools
+# same-named headers from unrelated subsystems into one directory, so e.g.
+# fs/ocfs2/file.h and drivers/net/.../iwlwifi/fw/file.h both land as "file.h"
+# and a stray reference pulls in the wrong one (ocfs2's needs handle_t). It also
+# picks one of the two audio_ipi_dma.h variants arbitrarily, which then clashes
+# on function signatures.
+#
+# Correct rule: add a directory only when the including file sits in it (so the
+# sibling header is unambiguous), or when that header name exists exactly once
+# in the tree. Ambiguous cross-directory names are left alone.
+# -idirafter is searched after every normal -I, so these never shadow a header
+# the kernel Makefiles already resolve correctly.
+INC=$(python3 - "$KDIR" <<'PY'
+import os, re, sys
+root = sys.argv[1]
+TOPS = ["arch/arm64", "drivers", "sound", "fs", "net", "security",
+        "kernel", "mm", "block", "crypto", "lib", "init", "ipc"]
+pat = re.compile(r'^\s*#\s*include\s*<([^>]+\.h)>', re.M)
+refs = {}
+for top in TOPS:
+    base = os.path.join(root, top)
+    if not os.path.isdir(base):
         continue
-    for f in fs:
-        if not f.endswith(".h"):
+    for d, _, fs in os.walk(base):
+        if "/.git" in d:
             continue
-        src = os.path.join(d, f)
-        # Flat link for bare <foo.h> includes.
-        flat = os.path.join(out, f)
-        if not os.path.lexists(flat):
+        for f in fs:
+            if not f.endswith((".c", ".h")):
+                continue
             try:
-                os.symlink(src, flat)
+                txt = open(os.path.join(d, f), errors="ignore").read()
             except OSError:
-                pass
-        # Mirrored paths for <subdir/foo.h> includes. A header may be
-        # referenced relative to different ancestor directories (e.g.
-        # <mi_disp/foo.h> from drm/mediatek/), so link the last 2-4 path
-        # components as well as the full path from source root.
-        parts = os.path.relpath(src, root).split(os.sep)  # e.g. drivers/gpu/drm/mediatek/mi_disp/foo.h
-        variants = set()
-        for n in range(1, min(5, len(parts))):  # trailing dirs + filename
-            variants.add(os.sep.join(parts[-(n+1):]))
-        # full path under drivers/ and under kernel root
-        variants.add(os.sep.join(parts))
-        if parts[0] == "drivers":
-            variants.add(os.sep.join(parts[1:]))
-        for v in variants:
-            mirror = os.path.join(out, v)
-            if not os.path.lexists(mirror):
-                try:
-                    os.makedirs(os.path.dirname(mirror), exist_ok=True)
-                    os.symlink(src, mirror)
-                except OSError:
-                    pass
+                continue
+            for m in pat.finditer(txt):
+                refs.setdefault(m.group(1), set()).add(d)
+
+index = {}
+for top in TOPS:
+    base = os.path.join(root, top)
+    if not os.path.isdir(base):
+        continue
+    for d, _, fs in os.walk(base):
+        if "/.git" in d:
+            continue
+        for f in fs:
+            if f.endswith(".h"):
+                index.setdefault(f, set()).add(d)
+
+dirs = set()
+for h, srcs in refs.items():
+    cands = index.get(h, set())
+    if not cands:
+        continue
+    same = srcs & cands          # including file lives with the header
+    if same:
+        dirs |= same
+    elif len(cands) == 1:        # unique in the tree: unambiguous
+        dirs |= cands
+print(" ".join("-idirafter" + d for d in sorted(dirs)))
 PY
-INC="-idirafter$FALLBACK"
+)
 # -Wno-error: modern Clang emits warnings (strict-prototypes, format) that
 # this old tree promotes to errors; upstream used an older toolchain.
 # -fgnu89-inline: legacy `inline` decl-in-header/def-in-.c semantics.
