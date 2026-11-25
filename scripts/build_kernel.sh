@@ -25,21 +25,45 @@ CROSS="CROSS_COMPILE=aarch64-linux-gnu-"
 # (<clk-mux.h>, <dt_idle_states.h>, <helio-dvfsrc-qos.h>). Modern compilers no
 # longer search the source dir implicitly. Inject the known directories;
 # keep the list short so the environment size stays bounded.
-INC_DIRS=(
-  drivers/clk/mediatek
-  drivers/cpuidle
-  drivers/devfreq/helio-dvfsrc-v3
-  drivers/extcon/mediatek
+# Scan for directories whose .c files include a sibling header via angle
+# brackets (<foo.h> where foo.h sits in the same dir). Only those need an
+# extra -I. This yields ~80 dirs (a few KB), not the entire tree.
+INC=$(python3 - "$KDIR" <<'PY'
+import os, re, sys
+root = sys.argv[1]
+pat = re.compile(r'^\s*#\s*include\s*<([^/>]+\.h)>')
+dirs = set()
+for base in ("drivers", "include"):
+    for d, _, fs in os.walk(os.path.join(root, base)):
+        for f in fs:
+            if not f.endswith((".c", ".h")):
+                continue
+            try:
+                lines = open(os.path.join(d, f), errors="ignore").read().splitlines()
+            except OSError:
+                continue
+            for ln in lines:
+                m = pat.match(ln)
+                if m and os.path.exists(os.path.join(d, m.group(1))):
+                    dirs.add(d)
+                    break
+print(" ".join("-I" + d for d in sorted(dirs)))
+PY
 )
-INC=""
-for d in "${INC_DIRS[@]}"; do INC="$INC -I$KDIR/$d"; done
-# This 4.14 tree declares ksm_flock() as plain `inline` in a header but
-# defines it in a .c file. Modern C99 semantics reject that at call sites;
-# GNU89 semantics (as the original toolchain used) emit an external call.
-export KCFLAGS="${INC} -fgnu89-inline ${KCFLAGS:+ $KCFLAGS}"
+# -Wno-error: modern Clang emits warnings (strict-prototypes, format) that
+# this old tree promotes to errors; upstream used an older toolchain.
+# -fgnu89-inline: legacy `inline` decl-in-header/def-in-.c semantics.
+export KCFLAGS="${INC} -Wno-error -fgnu89-inline ${KCFLAGS:+ $KCFLAGS}"
 
 echo "=== compiler ==="
 clang-14 --version | head -1
+
+# This tree declares ksm_flock() as bare `inline` in a header but defines it
+# in keyslot-manager.c. Modern compilers reject the call site (no body in
+# scope). Drop the `inline` keyword in the fetched copy — the .c definition
+# then provides a normal external symbol, which is semantically identical and
+# matches what the original toolchain emitted. Upstream source is untouched.
+sed -i 's/^inline void ksm_flock(/void ksm_flock(/' include/linux/keyslot-manager.h
 
 # 1) Base config is the exact config read from the device (/proc/config.gz).
 cp "$CFG" .config
