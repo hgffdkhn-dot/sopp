@@ -13,6 +13,12 @@ CFG="$REPO/config/device.config"
 
 cd "$KDIR"
 
+# Legacy MTK 4.14 drivers use angle-bracket includes for headers sitting next
+# to them (e.g. <clk-mux.h>, <dt_idle_states.h>). Old GCC searched the source
+# dir implicitly; modern GCC does not. Inject those dirs without touching the
+# upstream source tree.
+export KCFLAGS="-I$KDIR/drivers/clk/mediatek -I$KDIR/drivers/cpuidle ${KCFLAGS:-}"
+
 # 1) Base config is the exact config read from the device (/proc/config.gz).
 cp "$CFG" .config
 
