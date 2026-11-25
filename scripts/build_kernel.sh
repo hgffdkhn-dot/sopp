@@ -122,7 +122,7 @@ make ARCH=arm64 $CROSS olddefconfig
 echo "=== effective config ==="
 grep -E '^CONFIG_(LOCALVERSION|KPROBES|KRETPROBES|MODVERSIONS|PREEMPT|SMP|MODULES|MODULE_UNLOAD|AUDIT|SECURITY_SELINUX)=' .config
 echo "=== leftover =m modules (should be none) ==="
-grep '=m$' .config | head
+grep '=m$' .config || echo "(none)"
 
 # 3) Prepare headers/Module.symvers for the external module build.
 make ARCH=arm64 $CROSS -j"$(nproc)" modules_prepare
