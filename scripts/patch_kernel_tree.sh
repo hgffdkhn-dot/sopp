@@ -13,7 +13,10 @@ KDIR=${1:?usage: patch_kernel_tree.sh <kernel-src>}
 # The original toolchain emitted them as warnings. Rewrite every -Werror in
 # all Makefiles to -Wno-error so the tree builds with a modern compiler.
 find "$KDIR" \( -name Makefile -o -name '*.mk' \) -print0 | while IFS= read -r -d '' mk; do
-  perl -pi -e 's/-Werror(=[A-Za-z0-9-]+)?/-Wno-error$1/g' "$mk" 2>/dev/null || true
+  perl -pi -e '
+    s/-Werror-implicit-function-declaration/-Wno-error/g;
+    s/-Werror(=[A-Za-z0-9-]+)?/-Wno-error$1/g;
+  ' "$mk" 2>/dev/null || true
 done
 
 python3 - "$KDIR/security/selinux/hooks.c" <<'PY'
