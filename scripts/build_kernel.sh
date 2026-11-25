@@ -25,22 +25,36 @@ CROSS="CROSS_COMPILE=aarch64-linux-gnu-"
 # (<clk-mux.h>, <dt_idle_states.h>, <helio-dvfsrc-qos.h>). Modern compilers no
 # longer search the source dir implicitly. Inject the known directories;
 # keep the list short so the environment size stays bounded.
-# A few legacy MTK drivers include sibling headers via angle brackets
-# (<clk-mux.h>, <dt_idle_states.h>, ...). Modern compilers no longer search
-# the source dir implicitly. Only add the specific directories that need it —
-# a full-tree scan injects same-named headers (security.h, xfrm.h) ahead of the
-# correct ones and breaks SELinux includes.
-INC=""
-for d in \
-  drivers/clk/mediatek \
-  drivers/cpuidle \
-  drivers/devfreq/helio-dvfsrc-v3 \
-  drivers/extcon/mediatek \
-  drivers/iommu \
-  drivers/gpu/drm/mediatek \
-  drivers/gpu/drm/panel; do
-  INC="$INC -I$KDIR/$d"
-done
+# Legacy MTK drivers include sibling headers via angle brackets
+# (<clk-mux.h>, <adsp_helper.h>, ...). Modern compilers no longer search the
+# source dir implicitly. Scan only drivers/ (NOT include/) for such cases:
+# scanning include/ would inject -I paths containing same-named headers such
+# as security.h/xfrm.h ahead of the correct ones and break SELinux.
+INC=$(python3 - "$KDIR" <<'PY'
+import os, re, sys
+root = sys.argv[1]
+pat = re.compile(r'^\s*#\s*include\s*<([^/>]+\.h)>')
+# Headers that clash with kernel-wide names; never inject their directories.
+blacklist_names = {"types.h", "sched.h", "security.h", "xfrm.h", "audit.h", "kernel.h"}
+dirs = set()
+for d, _, fs in os.walk(os.path.join(root, "drivers")):
+    if any(os.path.exists(os.path.join(d, h)) for h in blacklist_names):
+        continue
+    for f in fs:
+        if not f.endswith((".c", ".h")):
+            continue
+        try:
+            lines = open(os.path.join(d, f), errors="ignore").read().splitlines()
+        except OSError:
+            continue
+        for ln in lines:
+            m = pat.match(ln)
+            if m and os.path.exists(os.path.join(d, m.group(1))):
+                dirs.add(d)
+                break
+print(" ".join("-I" + d for d in sorted(dirs)))
+PY
+)
 # -Wno-error: modern Clang emits warnings (strict-prototypes, format) that
 # this old tree promotes to errors; upstream used an older toolchain.
 # -fgnu89-inline: legacy `inline` decl-in-header/def-in-.c semantics.
