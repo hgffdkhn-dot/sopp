@@ -19,6 +19,12 @@ find "$KDIR" \( -name Makefile -o -name '*.mk' \) -print0 | while IFS= read -r -
   ' "$mk" 2>/dev/null || true
 done
 
+# Two headers declare lock helpers as bare `inline` while defining them in a
+# .c file (or later as static inline). Modern C99 semantics reject the call
+# site. Drop the stray `inline` keyword in the CI copy.
+sed -i 's/^inline void ksm_flock(/void ksm_flock(/' "$KDIR/include/linux/keyslot-manager.h"
+sed -i 's/^inline void blk_crypto_flock(/void blk_crypto_flock(/' "$KDIR/include/linux/blk-crypto.h"
+
 python3 - "$KDIR/security/selinux/hooks.c" <<'PY'
 import sys
 p = sys.argv[1]

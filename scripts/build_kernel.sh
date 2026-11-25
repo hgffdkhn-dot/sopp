@@ -49,15 +49,8 @@ export KCFLAGS="${INC} -Wno-error -fgnu89-inline ${KCFLAGS:+ $KCFLAGS}"
 echo "=== compiler ==="
 clang-14 --version | head -1
 
-# This tree declares ksm_flock() as bare `inline` in a header but defines it
-# in keyslot-manager.c. Modern compilers reject the call site (no body in
-# scope). Drop the `inline` keyword in the fetched copy — the .c definition
-# then provides a normal external symbol, which is semantically identical and
-# matches what the original toolchain emitted. Upstream source is untouched.
-sed -i 's/^inline void ksm_flock(/void ksm_flock(/' include/linux/keyslot-manager.h
-
-# Patch the trimmed OSS tree so it builds standalone (adds the missing
-# selinux/audit.c and wires it in). CI checkout only; upstream untouched.
+# Patch the trimmed OSS tree so it builds standalone. All source adaptations
+# live in one place; CI checkout only, upstream untouched.
 bash "$REPO/scripts/patch_kernel_tree.sh" "$KDIR"
 
 # 1) Base config is the exact config read from the device (/proc/config.gz).
