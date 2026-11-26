@@ -77,15 +77,20 @@ echo "=== include scan (platform=$PLATFORM) ==="
 python3 "$REPO/scripts/scan_includes.py" "$KDIR" \
     "$KDIR/.sopp-include-global" "$KDIR/.sopp-include-local" "$PLATFORM"
 
-INC=""
-while IFS= read -r d; do
-  [ -n "$d" ] && INC="$INC -idirafter$d"
-done < "$KDIR/.sopp-include-global"
-
+# Hundreds of include dirs is ~26 KB of flags, and inlining them makes the
+# kernel's per-object compile commands exceed the argument limit ("Argument
+# list too long" from /bin/sh, which shows up as a bogus Error 127). Clang reads
+# @file response files natively, so keep them behind one short path.
 # -Wno-error: modern Clang emits warnings (strict-prototypes, format) that this
 # old tree promotes to errors; upstream used an older toolchain.
 # -fgnu89-inline: legacy `inline` decl-in-header/def-in-.c semantics.
-export KCFLAGS="${INC} -Wno-error -fgnu89-inline ${KCFLAGS:+ $KCFLAGS}"
+{
+  while IFS= read -r d; do
+    [ -n "$d" ] && printf -- '-idirafter%s\n' "$d"
+  done < "$KDIR/.sopp-include-global"
+  printf -- '-Wno-error\n-fgnu89-inline\n'
+} > "$KDIR/.sopp-kcflags.rsp"
+export KCFLAGS="@$KDIR/.sopp-kcflags.rsp"
 
 # --- 4) Patch the trimmed tree ------------------------------------------------
 # All source adaptations live in one place; CI checkout only, upstream untouched.
