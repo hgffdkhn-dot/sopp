@@ -108,6 +108,12 @@ SOPP_SKIP="$SKIP" python3 "$REPO/scripts/scan_includes.py" "$KDIR" \
     [ -n "$d" ] && printf -- '-idirafter%s\n' "$d"
   done < "$KDIR/.sopp-include-global"
   printf -- '-Wno-error\n-fgnu89-inline\n'
+  # cmdq/v2/cmdq_def.h does "#ifdef CMDQ_COMMON_ENG_SUPPORT: include
+  # cmdq_engine_common.h #else: include cmdq_engine.h". The else branch points at
+  # a per-SoC header that only exists under cmdq/v3/<soc>, i.e. a different
+  # generation of the driver; the vendor's build defines this switch for these
+  # SoCs so that the engine header comes from the same generation as the core.
+  printf -- '-DCMDQ_COMMON_ENG_SUPPORT\n'
 } > "$KDIR/.sopp-kcflags.rsp"
 export KCFLAGS="@$KDIR/.sopp-kcflags.rsp"
 

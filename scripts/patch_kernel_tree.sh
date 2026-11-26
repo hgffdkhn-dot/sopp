@@ -193,6 +193,31 @@ for f in "$KDIR"/drivers/misc/mediatek/pseudo_m4u/*.c; do
   echo "patched: $(basename "$f") no longer needs the ARM32 dma-iommu.h"
 done
 
+# --- headers the vendor's build system injects, but Makefiles do not ----------
+# base/power/include/mtk_idle.h is a dispatcher that picks spm_vN/mtk_idle.h by
+# CONFIG_MACH_*, and it has no branch for MT6893/MT6885; the result is that
+# thermal's mtk_tc_wrapper.c switches on NOTIFY_*_IDLE identifiers that were
+# never declared. Same story for lpm's platform trace, which needs
+# struct MTK_LPM_PLAT_TRACE from a header its own Makefile never names.
+# Forcing the header with -include is local to these Makefiles and survives the
+# guarded duplicate copies.
+inject_header() {                       # <makefile> <header relative to srctree>
+  mk=$1
+  hdr=$2
+  [ -f "$mk" ] || return 0
+  [ -f "$KDIR/$hdr" ] || return 0
+  grep -q "soppSU-include:$hdr" "$mk" && return 0
+  printf '\n# soppSU-include:%s\nccflags-y += -include $(srctree)/%s\n' \
+    "$hdr" "$hdr" >> "$mk"
+  echo "patched: $(echo "$mk" | sed "s#$KDIR/##") force-includes $(basename "$hdr")"
+}
+inject_header "$KDIR/drivers/misc/mediatek/thermal/Makefile" \
+  drivers/misc/mediatek/base/power/include/spm_v4/mtk_idle.h
+inject_header "$KDIR/drivers/misc/mediatek/thermal/mt6893/Makefile" \
+  drivers/misc/mediatek/base/power/include/spm_v4/mtk_idle.h
+inject_header "$KDIR/drivers/misc/mediatek/lpm/platform/Makefile" \
+  drivers/misc/mediatek/lpm/inc/mtk_lpm_platform.h
+
 # --- lpm: two different headers share one include guard ----------------------
 # lpm/platform/mtk_lpm_trace.h and lpm/inc/mtk_lpm_trace_event/mtk_lpm_trace.h
 # are unrelated files that both guard on __MTK_LPM_TRACE_H__. The vendor build
