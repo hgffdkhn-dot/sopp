@@ -72,7 +72,12 @@ grep '=m$' .config || echo "(none)"
 #    mali_kbase_defs.h) -> injected into each subtree's own Makefile, because a
 #    global list puts them all on one search path and silently picks the wrong
 #    revision's struct layout.
-PLATFORM=$(sed -n 's/^CONFIG_MTK_PLATFORM="\(.*\)"/\1/p' .config | head -1)
+# CONFIG_MTK_PLATFORM is the SoC *family* ("mt6885"), but the driver
+# directories are laid out by the actual part (mt6893): ppm's
+# mach/mt6893/mtk_ppm_cobra_event.h has no mt6885 counterpart. Prefer the
+# CONFIG_MACH_MTxxxx suffix when choosing between per-SoC headers.
+PLATFORM=$(sed -n 's/^CONFIG_MACH_MT\([0-9]\+\)=y$/mt\1/p' .config | head -1)
+[ -n "$PLATFORM" ] || PLATFORM=$(sed -n 's/^CONFIG_MTK_PLATFORM="\(.*\)"/\1/p' .config | head -1)
 echo "=== include scan (platform=$PLATFORM) ==="
 python3 "$REPO/scripts/scan_includes.py" "$KDIR" \
     "$KDIR/.sopp-include-global" "$KDIR/.sopp-include-local" "$PLATFORM"

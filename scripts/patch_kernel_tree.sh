@@ -8,6 +8,31 @@
 set -euo pipefail
 KDIR=${1:?usage: patch_kernel_tree.sh <kernel-src>}
 
+# --- keep only the Mali revision the device uses ------------------------------
+# The OSS drop ships every Mali revision side by side, each with its own
+# mali_kbase_defs.h. CONFIG_MTK_GPU_VERSION pins the device to one of them
+# ("mali valhall r25p0"), but any include path that reaches across the others
+# yields a mismatched struct layout (hundreds of "struct kbase_device has no
+# member named ..." errors). Removing the unused revisions makes the choice
+# unambiguous instead of relying on search order.
+GPU_VENDOR=$(sed -n 's/^CONFIG_MTK_GPU_VERSION="mali \([a-z]*\) \([a-z0-9]*\)".*/\1 \2/p' \
+  "$KDIR/.config" 2>/dev/null | head -1)
+if [ -n "$GPU_VENDOR" ]; then
+  set -- $GPU_VENDOR
+  KEEP_VENDOR="mali_$1"
+  KEEP_REV="mali-$2"
+  echo "patched: keeping only $KEEP_VENDOR/$KEEP_REV"
+  for v in "$KDIR"/drivers/misc/mediatek/gpu/gpu_mali/*/; do
+    for r in "$v"mali-r*/; do
+      [ -d "$r" ] || continue
+      case "$r" in
+        */"$KEEP_VENDOR"/"$KEEP_REV"/*) ;;
+        *) rm -rf "$r" ;;
+      esac
+    done
+  done
+fi
+
 # Modern Clang emits style/format warnings that this 2019 tree turns into
 # hard errors via -Werror (top-level and several MTK sound/DRM Makefiles).
 # The original toolchain emitted them as warnings. Rewrite every -Werror in
