@@ -47,18 +47,30 @@ if [ -n "$GPU_VENDOR" ]; then
 fi
 
 # --- keep one CMDQ generation ------------------------------------------------
-# cmdq/v2 and cmdq/v3 both define enum CMDQ_GROUP_ENUM, struct cmdqCommandStruct
-# and the whole cmdqCore* surface, with different layouts. The tree configured
-# here has a v3/<SoC> directory (mt6885, the family this part belongs to) and the
-# MDP driver includes v3's cmdq_engine.h, so v2 is the copy that must go: leaving
-# it on any include path produces ~250 "redeclaration of enumerator" and
-# "conflicting types" errors inside mdp. Note the tree's own Makefile builds
-# neither generation for mt6885, so v2 has no build of its own to preserve.
+# cmdq/v2 and cmdq/v3 both define enum CMDQ_GROUP_ENUM and the cmdqCore*
+# surface, so exactly one may be visible: whichever generation the kernel is
+# configured for. This tree leaves CONFIG_MTK_CMDQ_V3 unset, and mdp/mdp_def.h
+# carries its own copies of the structures v3 also defines (with no guard for
+# it), so v3 is the copy that breaks MDP with ~250 "redeclaration of enumerator"
+# and "redefinition of struct SubsysStruct" errors.
 CMDQ="$KDIR/drivers/misc/mediatek/cmdq"
 MTK_PLATFORM=$(sed -n 's/^CONFIG_MTK_PLATFORM="\(.*\)"/\1/p' "$KDIR/.config" 2>/dev/null | head -1)
-if [ -d "$CMDQ/v2" ] && [ -n "$MTK_PLATFORM" ] && [ -d "$CMDQ/v3/$MTK_PLATFORM" ]; then
+if grep -q '^CONFIG_MTK_CMDQ_V3=y' "$KDIR/.config" 2>/dev/null; then
   rm -rf "$CMDQ/v2"
-  echo "patched: dropped legacy cmdq/v2 (this SoC uses cmdq/v3/$MTK_PLATFORM)"
+  echo "patched: CMDQ generation v3 (CONFIG_MTK_CMDQ_V3=y)"
+else
+  rm -rf "$CMDQ/v3"
+  echo "patched: CMDQ generation v2 (CONFIG_MTK_CMDQ_V3 unset)"
+fi
+
+# --- one mtk_idle.h ----------------------------------------------------------
+# include/spm and include/spm_v4 both define the NOTIFY_*_IDLE event enum that
+# thermal's mtk_tc_wrapper.c switches on. spm_v4 is the generation matching this
+# SoC's low-power stack; include/spm belongs to the SPM driver that CONFIG_MTK_LPM
+# replaced here, and nothing under it gets compiled.
+if [ -f "$KDIR/drivers/misc/mediatek/base/power/include/spm_v4/mtk_idle.h" ]; then
+  rm -f "$KDIR/drivers/misc/mediatek/base/power/include/spm/mtk_idle.h"
+  echo "patched: kept include/spm_v4/mtk_idle.h only"
 fi
 
 # --- keep one watchdog generation --------------------------------------------
@@ -180,6 +192,18 @@ for f in "$KDIR"/drivers/misc/mediatek/pseudo_m4u/*.c; do
   perl -0pi -e 's{#include <asm/dma-iommu\.h>}{/* arch/arm64 has no asm/dma-iommu.h; only this macro is used. */\n#ifndef ARM_MAPPING_ERROR\n#define ARM_MAPPING_ERROR\t\t(~(dma_addr_t)0x0)\n#endif}' "$f"
   echo "patched: $(basename "$f") no longer needs the ARM32 dma-iommu.h"
 done
+
+# --- lpm: two different headers share one include guard ----------------------
+# lpm/platform/mtk_lpm_trace.h and lpm/inc/mtk_lpm_trace_event/mtk_lpm_trace.h
+# are unrelated files that both guard on __MTK_LPM_TRACE_H__. The vendor build
+# never puts them in the same translation unit; ours does, so whichever is read
+# second is skipped whole -- and the file that needed the struct declaration then
+# compiles against nothing ("invalid use of undefined type MTK_LPM_PLAT_TRACE").
+LPM_TRACE_EVENT="$KDIR/drivers/misc/mediatek/lpm/inc/mtk_lpm_trace_event/mtk_lpm_trace.h"
+if [ -f "$LPM_TRACE_EVENT" ]; then
+  sed -i 's/__MTK_LPM_TRACE_H__/__MTK_LPM_TRACE_EVENT_H__/g' "$LPM_TRACE_EVENT"
+  echo "patched: mtk_lpm_trace_event header has its own include guard"
+fi
 
 # --- modern-clang tolerance ---------------------------------------------------
 # Modern Clang emits style/format warnings that this 2019 tree turns into
