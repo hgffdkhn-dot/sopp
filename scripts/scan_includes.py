@@ -23,6 +23,12 @@ and injected into their own Makefile instead, where they only affect that
 subtree. Unambiguous ones go to the "global" list.
 
 Usage: scan_includes.py <kernel-root> <glob-out> <local-out> [platform]
+
+Directories listed in $SOPP_SKIP (colon separated, relative to the kernel root)
+are ignored entirely. They hold drivers the chosen config does not build, whose
+headers must not be reachable: gud/ ships a second tee_client_api.h whose struct
+definitions differ from MicroTrust's teei/ copy, and reaching it turns every
+teei object into a redefinition error.
 """
 import os
 import re
@@ -34,8 +40,24 @@ import sys
 # legitimate <file.h> references.
 TOPS = ["arch/arm64", "drivers", "sound"]
 
+SKIP = [p for p in os.environ.get("SOPP_SKIP", "").split(":") if p]
+
 ANGLE = re.compile(r'^\s*#\s*include\s*<([^>\n]+\.h)>', re.M)
 QUOTE = re.compile(r'^\s*#\s*include\s*"([^"\n]+\.h)"', re.M)
+
+
+def source_dirs(root, top):
+    """Walk one top-level tree, pruning .git and the disabled subtree list."""
+    base = os.path.join(root, top)
+    if not os.path.isdir(base):
+        return
+    skipped = {os.path.normpath(os.path.join(root, s)) for s in SKIP}
+    for d, dirs, files in os.walk(base):
+        dirs[:] = [x for x in dirs
+                   if os.path.normpath(os.path.join(d, x)) not in skipped]
+        if "/.git" in d:
+            continue
+        yield d, files
 
 
 def main():
@@ -44,12 +66,7 @@ def main():
 
     angles, quotes = {}, {}
     for top in TOPS:
-        base = os.path.join(root, top)
-        if not os.path.isdir(base):
-            continue
-        for d, _, files in os.walk(base):
-            if "/.git" in d:
-                continue
+        for d, files in source_dirs(root, top):
             for f in files:
                 if not f.endswith((".c", ".h")):
                     continue
@@ -68,12 +85,7 @@ def main():
     # walking the tree once per include.
     by_suffix = {}
     for top in TOPS:
-        base = os.path.join(root, top)
-        if not os.path.isdir(base):
-            continue
-        for d, _, files in os.walk(base):
-            if "/.git" in d:
-                continue
+        for d, files in source_dirs(root, top):
             for f in files:
                 if not f.endswith(".h"):
                     continue

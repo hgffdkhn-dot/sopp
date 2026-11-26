@@ -78,8 +78,22 @@ grep '=m$' .config || echo "(none)"
 # CONFIG_MACH_MTxxxx suffix when choosing between per-SoC headers.
 PLATFORM=$(sed -n 's/^CONFIG_MACH_MT\([0-9]\+\)=y$/mt\1/p' .config | head -1)
 [ -n "$PLATFORM" ] || PLATFORM=$(sed -n 's/^CONFIG_MTK_PLATFORM="\(.*\)"/\1/p' .config | head -1)
-echo "=== include scan (platform=$PLATFORM) ==="
-python3 "$REPO/scripts/scan_includes.py" "$KDIR" \
+
+# Prune first: the scanner works on whatever tree it is given, so the eight
+# unused Mali revisions and the dead Trustonic TEE stack have to be gone before
+# it looks for duplicate header names. Doing it afterwards is too late -- the
+# scan would already have recorded them as ambiguity and handed the build a
+# path list pointing at code that no longer exists.
+bash "$REPO/scripts/patch_kernel_tree.sh" "$KDIR" prune
+
+# Every tree the config does not build must stay out of the scan. gud/ carries a
+# second tee_client_api.h; letting the scanner see it makes teei/ include
+# Trustonic's copy and fail with "redefinition of union teec_parameter".
+SKIP=""
+grep -q '^CONFIG_TRUSTONIC_TEE_SUPPORT=y' .config || SKIP="drivers/misc/mediatek/gud"
+
+echo "=== include scan (platform=$PLATFORM, skip=${SKIP:-none}) ==="
+SOPP_SKIP="$SKIP" python3 "$REPO/scripts/scan_includes.py" "$KDIR" \
     "$KDIR/.sopp-include-global" "$KDIR/.sopp-include-local" "$PLATFORM"
 
 # Hundreds of include dirs is ~26 KB of flags, and inlining them makes the

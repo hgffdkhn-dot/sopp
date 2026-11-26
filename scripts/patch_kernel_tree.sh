@@ -6,7 +6,20 @@
 # We neutralize only those unbuildable, device-disabled callbacks in the CI
 # checkout. Upstream source is never modified.
 set -euo pipefail
-KDIR=${1:?usage: patch_kernel_tree.sh <kernel-src>}
+KDIR=${1:?usage: patch_kernel_tree.sh <kernel-src> [prune|full]}
+PHASE=${2:-full}
+
+# --- phase "prune": remove trees that must not exist before the include scan ---
+# Two of the adaptations below have to happen BEFORE scan_includes.py indexes the
+# tree, because they change which headers exist at all:
+#   * dropping the unused Mali revisions removes eight competing copies of
+#     mali_kbase_defs.h, which the scanner would otherwise treat as ambiguous;
+#   * the unused Trustonic TEE tree ships a second tee_client_api.h that collides
+#     with MicroTrust's and breaks every teei file.
+# Everything else in this file only rewrites Makefiles that the scanner has
+# already read, so it must run after the scan. The pruning is idempotent, so a
+# full run does it again without harm.
+prune_tree() {
 
 # --- keep only the Mali revision the device uses ------------------------------
 # The OSS drop ships every Mali revision side by side, each with its own
@@ -33,6 +46,34 @@ if [ -n "$GPU_VENDOR" ]; then
   done
 fi
 
+# --- neutralise the unused Trustonic TEE stack --------------------------------
+# The device runs MicroTrust (CONFIG_MICROTRUST_TEE_SUPPORT=y), so gud/ is dead
+# code -- but it cannot simply be deleted: drivers/misc/mediatek/Kconfig sources
+# gud/Kconfig, and removing the directory aborts every later "make" with
+# 'can't open file "drivers/misc/mediatek/gud/Kconfig"'. Emptying its Makefile
+# keeps the Kconfig reachable while guaranteeing nothing under gud/ is built,
+# and scan_includes.py is told to ignore the tree so its tee_client_api.h cannot
+# hijack the MicroTrust build (the two define the same structs differently).
+GUD="$KDIR/drivers/misc/mediatek/gud"
+if [ -f "$GUD/Makefile" ] && ! grep -q '^CONFIG_TRUSTONIC_TEE_SUPPORT=y' "$KDIR/.config"; then
+  : > "$GUD/Makefile"
+  echo "patched: gud TEE tree kept for Kconfig but no longer built"
+fi
+
+# pseudo_m4u adds -I arch/arm/include, the 32-bit tree. On arm64 that shadows
+# asm/memory.h and dies on CONFIG_PHYS_OFFSETUL, which only exists on ARM32.
+sed -i '/-I\$(srctree)\/arch\/arm\/include/d' \
+  "$KDIR/drivers/misc/mediatek/pseudo_m4u/Makefile" 2>/dev/null || true
+
+}
+
+prune_tree
+if [ "$PHASE" = prune ]; then
+  echo "patched: prune phase complete"
+  exit 0
+fi
+
+# --- modern-clang tolerance ---------------------------------------------------
 # Modern Clang emits style/format warnings that this 2019 tree turns into
 # hard errors via -Werror (top-level and several MTK sound/DRM Makefiles).
 # The original toolchain emitted them as warnings. Rewrite every -Werror in
@@ -221,18 +262,3 @@ if [ -f "$KDIR/.sopp-include-local" ]; then
   done < "$KDIR/.sopp-include-local"
   echo "patched: $applied subtree-scoped include paths, $skipped skipped"
 fi
-
-# --- drop the unused TEE stack and a stray ARM32 include path ------------------
-# The device runs MicroTrust (CONFIG_TRUSTONIC_TEE_SUPPORT is not set), but the
-# gud/ directory still gets pulled in by GP support and its two copies of
-# tee_client_types.h disagree on struct layout. Nothing outside gud/ references
-# it, so removing it cannot break another driver.
-if ! grep -q '^CONFIG_TRUSTONIC_TEE_SUPPORT=y' "$KDIR/.config" 2>/dev/null; then
-  rm -rf "$KDIR/drivers/misc/mediatek/gud"
-  echo "patched: removed unused gud TEE tree"
-fi
-# pseudo_m4u adds -I arch/arm/include, which is the 32-bit tree and shadows
-# arch/arm64 headers (CONFIG_PHYS_OFFSETUL does not exist on arm64).
-sed -i '/-I\$(srctree)\/arch\/arm\/include/d' \
-  "$KDIR/drivers/misc/mediatek/pseudo_m4u/Makefile" 2>/dev/null || true
-echo "patched: dropped ARM32 include path from pseudo_m4u"
