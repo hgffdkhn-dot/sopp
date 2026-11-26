@@ -179,8 +179,11 @@ if [ -f "$KDIR/.sopp-include-local" ]; then
     rel="${d#$KDIR/}"
     if [ -f "$d/Makefile" ]; then
       if ! grep -q "soppSU-scope:$rel" "$d/Makefile" 2>/dev/null; then
-        printf '\n# soppSU-scope:%s\nccflags-y += -I$(srctree)/%s\n' "$rel" "$rel" \
-          >> "$d/Makefile"
+        # ccflags-y covers objects built by this Makefile; subdir-ccflags-y
+        # carries the path down to subdirectories that have their own Makefile
+        # (Mali's platform/mtk_platform_common).
+        printf '\n# soppSU-scope:%s\nccflags-y += -I$(srctree)/%s\nsubdir-ccflags-y += -I$(srctree)/%s\n' \
+          "$rel" "$rel" "$rel" >> "$d/Makefile"
       fi
       applied=$((applied + 1))
     else
