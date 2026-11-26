@@ -218,10 +218,19 @@ inject_header() {                       # <makefile> <header relative to srctree
     "$hdr" "$hdr" >> "$mk"
   echo "patched: $(echo "$mk" | sed "s#$KDIR/##") force-includes $(basename "$hdr")"
 }
-inject_header "$KDIR/drivers/misc/mediatek/thermal/Makefile" \
-  drivers/misc/mediatek/base/power/include/spm_v4/mtk_idle.h
-inject_header "$KDIR/drivers/misc/mediatek/thermal/mt6893/Makefile" \
-  drivers/misc/mediatek/base/power/include/spm_v4/mtk_idle.h
+# Apply at every level that might own the failing object: kbuild only honours
+# ccflags-y of the Makefile that actually compiles the file, and MTK nests these
+# three deep (thermal/mt6893/src/mtk_tc_wrapper.o).
+for mk in \
+  drivers/misc/mediatek/thermal/Makefile \
+  drivers/misc/mediatek/thermal/common/Makefile \
+  drivers/misc/mediatek/thermal/mt6893/Makefile \
+  drivers/misc/mediatek/thermal/mt6893/src/Makefile \
+  drivers/misc/mediatek/thermal/mt6885/Makefile \
+  drivers/misc/mediatek/thermal/mt6885/src/Makefile
+do
+  inject_header "$KDIR/$mk" drivers/misc/mediatek/base/power/include/spm_v4/mtk_idle.h
+done
 inject_header "$KDIR/drivers/misc/mediatek/lpm/platform/Makefile" \
   drivers/misc/mediatek/lpm/inc/mtk_lpm_platform.h
 
