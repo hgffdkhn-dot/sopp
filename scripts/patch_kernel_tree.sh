@@ -221,3 +221,18 @@ if [ -f "$KDIR/.sopp-include-local" ]; then
   done < "$KDIR/.sopp-include-local"
   echo "patched: $applied subtree-scoped include paths, $skipped skipped"
 fi
+
+# --- drop the unused TEE stack and a stray ARM32 include path ------------------
+# The device runs MicroTrust (CONFIG_TRUSTONIC_TEE_SUPPORT is not set), but the
+# gud/ directory still gets pulled in by GP support and its two copies of
+# tee_client_types.h disagree on struct layout. Nothing outside gud/ references
+# it, so removing it cannot break another driver.
+if ! grep -q '^CONFIG_TRUSTONIC_TEE_SUPPORT=y' "$KDIR/.config" 2>/dev/null; then
+  rm -rf "$KDIR/drivers/misc/mediatek/gud"
+  echo "patched: removed unused gud TEE tree"
+fi
+# pseudo_m4u adds -I arch/arm/include, which is the 32-bit tree and shadows
+# arch/arm64 headers (CONFIG_PHYS_OFFSETUL does not exist on arm64).
+sed -i '/-I\$(srctree)\/arch\/arm\/include/d' \
+  "$KDIR/drivers/misc/mediatek/pseudo_m4u/Makefile" 2>/dev/null || true
+echo "patched: dropped ARM32 include path from pseudo_m4u"
