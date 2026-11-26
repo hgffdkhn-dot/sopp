@@ -112,6 +112,36 @@ do
   fi
 done
 
+# --- keep one per-SoC MDP tree ------------------------------------------------
+# mdp/mt6885 and mdp/mt6893 each carry mdp_engine.h and a full copy of the
+# engine tables. mdp/Makefile builds the one named by CONFIG_MTK_PLATFORM
+# (mt6885 here), so leaving the other on the include path feeds mdp/mt6885
+# objects the mt6893 enum ladder: dozens of "redeclaration of enumerator" and
+# "redefinition of struct SubsysStruct".
+if [ -d "$KDIR/drivers/misc/mediatek/mdp" ] && [ -n "${MTK_PLATFORM:-}" ]; then
+  for d in "$KDIR"/drivers/misc/mediatek/mdp/mt*/; do
+    [ -d "$d" ] || continue
+    name=$(basename "$d")
+    case "$name" in
+      mt[0-9]*) ;;
+      *) continue ;;
+    esac
+    case "$name" in
+      "$MTK_PLATFORM") ;;
+      *) rm -rf "$d"; echo "patched: dropped mdp/$name" ;;
+    esac
+  done
+fi
+
+# --- mdpm: one common header -------------------------------------------------
+# include/mdpm_v1/mtk_mdpm_common.h declares the debug flag as bool, mdpm_v2's
+# copy as int, and only mdpm_v2 (and its mt6893 platform dir) is ever compiled
+# here. The v1 headers are dead weight that shadows the v2 ones.
+if [ -d "$KDIR/drivers/misc/mediatek/base/power/include/mdpm_v2" ]; then
+  rm -rf "$KDIR/drivers/misc/mediatek/base/power/include/mdpm_v1"
+  echo "patched: dropped stale include/mdpm_v1 headers"
+fi
+
 # --- neutralise the unused Trustonic TEE stack --------------------------------
 # The device runs MicroTrust (CONFIG_MICROTRUST_TEE_SUPPORT=y), so gud/ is dead
 # code -- but it cannot simply be deleted: drivers/misc/mediatek/Kconfig sources
