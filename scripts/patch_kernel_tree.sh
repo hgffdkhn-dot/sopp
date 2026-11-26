@@ -164,3 +164,32 @@ if grep -q '^-*KBUILD_CFLAGS.*mgeneral-regs-only' "$KDIR/arch/arm64/Makefile"; t
 else
   echo "patched: removed global -mgeneral-regs-only"
 fi
+
+# --- subtree-scoped include paths --------------------------------------------
+# A directory whose needed header name exists in several revisions cannot go on
+# the global -idirafter list: every copy would compete and the alphabetically
+# first one wins, which is how a Mali r25p0 build ends up compiled against a
+# Bifrost header. Give such directories their own -I in their own Makefile, so
+# the path only applies inside that subtree.
+if [ -f "$KDIR/.sopp-include-local" ]; then
+  applied=0
+  skipped=0
+  while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    rel="${d#$KDIR/}"
+    if [ -f "$d/Makefile" ]; then
+      if ! grep -q "soppSU-scope:$rel" "$d/Makefile" 2>/dev/null; then
+        printf '\n# soppSU-scope:%s\nccflags-y += -I$(srctree)/%s\n' "$rel" "$rel" \
+          >> "$d/Makefile"
+      fi
+      applied=$((applied + 1))
+    else
+      # No Makefile of its own: the .c files live elsewhere and this is a pure
+      # header directory. Widening a parent's subdir-ccflags-y would leak the
+      # path across the whole subtree, so leave it for a targeted fix.
+      echo "WARN: $rel has no Makefile of its own; not scoped"
+      skipped=$((skipped + 1))
+    fi
+  done < "$KDIR/.sopp-include-local"
+  echo "patched: $applied subtree-scoped include paths, $skipped skipped"
+fi

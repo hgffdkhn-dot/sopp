@@ -9,7 +9,7 @@
 
 | 文件 | 用途 |
 | --- | --- |
-| `soppSU-kernel-ares.zip` | AnyKernel3 刷机包：替换 kernel+dtb，保留 ramdisk 与已装的 Kitsune Magisk |
+| `soppSU-kernel-ares.zip` | AnyKernel3 刷机包：只替换 boot 分区里的 kernel，保留原机 dtb、ramdisk 与已装的 Kitsune Magisk |
 | `soppsu.ko` | 内核模块，可独立 insmod 热加载，也可随内核内置 |
 | `s0ppSU-v1.2.0.apk` | Kotlin 管理器，含 Root 探测 + 热启动 |
 | `soppctl` | 用户态 AArch64 命令行工具 |

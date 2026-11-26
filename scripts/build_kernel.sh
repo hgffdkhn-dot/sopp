@@ -21,98 +21,25 @@ export CC=clang-14
 export CLANG_TRIPLE=aarch64-linux-gnu-
 CROSS="CROSS_COMPILE=aarch64-linux-gnu-"
 
-# This trimmed 4.14 tree has MTK drivers that include their sibling headers
-# with angle brackets (<audio_ipi_dma.h>, <adsp_helper.h>, <mtk_iommu_ext.h>).
-# Modern compilers do not search the source directory for <> includes, so those
-# headers must be reachable through -idirafter.
-#
-# A flat symlink farm of every header was tried first and is wrong: it pools
-# same-named headers from unrelated subsystems into one directory, so e.g.
-# fs/ocfs2/file.h and drivers/net/.../iwlwifi/fw/file.h both land as "file.h"
-# and a stray reference pulls in the wrong one (ocfs2's needs handle_t). It also
-# picks one of the two audio_ipi_dma.h variants arbitrarily, which then clashes
-# on function signatures.
-#
-# Correct rule: add a directory only when the including file sits in it (so the
-# sibling header is unambiguous), or when that header name exists exactly once
-# in the tree. Ambiguous cross-directory names are left alone.
-# -idirafter is searched after every normal -I, so these never shadow a header
-# the kernel Makefiles already resolve correctly.
-INC=$(python3 - "$KDIR" <<'PY'
-import os, re, sys
-root = sys.argv[1]
-# Only the trees the vendor trimmed need help. fs/, net/ and security/ are
-# intact upstream subsystems whose Makefiles already set up their own include
-# paths; adding their directories here would put e.g. fs/ocfs2/file.h on the
-# search path and hijack legitimate <file.h> references.
-TOPS = ["arch/arm64", "drivers", "sound"]
-angle = re.compile(r'^\s*#\s*include\s*<([^>\n]+\.h)>', re.M)
-quote = re.compile(r'^\s*#\s*include\s*"([^"\n]+\.h)"', re.M)
+# This trimmed 4.14 tree is normally built by an internal vendor build system
+# that supplies include paths the upstream-style Makefiles here do not carry.
+# Two cases need very different treatment (full reasoning in
+# scripts/scan_includes.py):
+#   - a header name that is unique in the tree -> one global -idirafter list;
+#   - a name that exists in several revisions (Mali alone ships nine copies of
+#     mali_kbase_defs.h) -> injected into each subtree's own Makefile, because a
+#     global list puts them all on one search path and silently picks the wrong
+#     revision's struct layout.
+python3 "$REPO/scripts/scan_includes.py" "$KDIR" \
+    "$KDIR/.sopp-include-global" "$KDIR/.sopp-include-local"
 
-angles, quotes = {}, {}
-for top in TOPS:
-    base = os.path.join(root, top)
-    if not os.path.isdir(base):
-        continue
-    for d, _, fs in os.walk(base):
-        if "/.git" in d:
-            continue
-        for f in fs:
-            if not f.endswith((".c", ".h")):
-                continue
-            try:
-                txt = open(os.path.join(d, f), errors="ignore").read()
-            except OSError:
-                continue
-            for m in angle.finditer(txt):
-                angles.setdefault(m.group(1), set()).add(d)
-            for m in quote.finditer(txt):
-                quotes.setdefault(m.group(1), set()).add(d)
+INC=""
+while IFS= read -r d; do
+  [ -n "$d" ] && INC="$INC -idirafter$d"
+done < "$KDIR/.sopp-include-global"
 
-index = {}
-for top in TOPS:
-    base = os.path.join(root, top)
-    if not os.path.isdir(base):
-        continue
-    for d, _, fs in os.walk(base):
-        if "/.git" in d:
-            continue
-        for f in fs:
-            if f.endswith(".h"):
-                index.setdefault(f, set()).add(d)
-
-def cands_for(h):
-    if "/" in h:
-        return set()
-    return index.get(h, set())
-
-dirs = set()
-# Angle brackets: the compiler never looks in the source dir, so a header that
-# any includer keeps as a sibling needs that sibling dir on the path. A header
-# referenced from elsewhere is only safe to add when it is unique in the tree.
-for h, srcs in angles.items():
-    c = cands_for(h)
-    if not c:
-        continue
-    same = srcs & c
-    if same:
-        dirs |= same
-    if (srcs - c) and len(c) == 1:
-        dirs |= c
-# Quotes: the compiler already searches the includer's own directory, so the
-# sibling case needs nothing. Only an includer living elsewhere matters, and
-# only when the header has a single home (otherwise the choice is ambiguous).
-for h, srcs in quotes.items():
-    c = cands_for(h)
-    if not c:
-        continue
-    if (srcs - c) and len(c) == 1:
-        dirs |= c
-print(" ".join("-idirafter" + d for d in sorted(dirs)))
-PY
-)
-# -Wno-error: modern Clang emits warnings (strict-prototypes, format) that
-# this old tree promotes to errors; upstream used an older toolchain.
+# -Wno-error: modern Clang emits warnings (strict-prototypes, format) that this
+# old tree promotes to errors; upstream used an older toolchain.
 # -fgnu89-inline: legacy `inline` decl-in-header/def-in-.c semantics.
 export KCFLAGS="${INC} -Wno-error -fgnu89-inline ${KCFLAGS:+ $KCFLAGS}"
 
