@@ -10,6 +10,14 @@ mkdir -p "$OUT"
 
 cd "$KDIR"
 
+# Drop the git metadata before building. scripts/setlocalversion appends a "+" to
+# the release string whenever the tree is not exactly at a clean HEAD, and this
+# tree is patched by definition. That "+" lands in the kernel's and the module's
+# vermagic ("4.14.186-g844fd19c6+"), and on a MODVERSIONS kernel insmod then
+# refuses the module: "version magic ... should be '4.14.186-g844fd19c6 ...'".
+# The commit is already pinned by the workflow, so nothing here needs git.
+rm -rf "$KDIR/.git"
+
 # This 4.14 tree is built upstream with Clang (build.config.mtk.aarch64: CC=clang,
 # clang-r383902). GCC's C99 inline semantics break legacy code here (ksm_flock
 # and friends), so compile with Clang to stay close to upstream. CROSS_COMPILE
@@ -182,6 +190,19 @@ if [ -n "$missing" ]; then
   exit 1
 fi
 echo "all $(wc -l < /tmp/sopp-undef.txt) undefined symbols are exported by the kernel"
+
+# The device is running 4.14.186-g844fd19c6; anything else is rejected at load
+# time with "version magic ... should be ...". Catch it here rather than on the
+# phone.
+VERMAGIC=$(readelf -p .modinfo "$OUT/soppsu.ko" | sed -n 's/.*vermagic=\(.*\)/\1/p')
+echo "=== vermagic: $VERMAGIC ==="
+case "$VERMAGIC" in
+  "4.14.186-g844fd19c6 "*) ;;
+  *)
+    echo "ERROR: vermagic must start with '4.14.186-g844fd19c6', got '$VERMAGIC'"
+    exit 1
+    ;;
+esac
 
 # --- 7) Userspace client ------------------------------------------------------
 aarch64-linux-gnu-gcc -O2 -static -o "$OUT/soppctl" "$REPO/userspace/soppctl.c"
