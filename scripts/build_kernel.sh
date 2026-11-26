@@ -176,7 +176,13 @@ make ARCH=arm64 $CROSS -j"$(nproc)" modules_prepare
 #    fails with "disagrees about version of symbol" on a MODVERSIONS kernel.
 #    The OSS tree lacks vendor-private DTS overlays (k6893v1_64/cust.dtsi), so
 #    we build the image only and let AnyKernel3 keep the device's stock dtb.
-make ARCH=arm64 $CROSS -j"$(nproc)" Image.gz
+# -k keeps going after the first failing object so a single CI run surfaces
+# every remaining incompatibility instead of one per round trip.
+make ARCH=arm64 $CROSS -j"$(nproc)" -k Image.gz || true
+if [ ! -f arch/arm64/boot/Image.gz ]; then
+  echo "ERROR: kernel image was not produced (see errors above)"
+  exit 1
+fi
 cp arch/arm64/boot/Image.gz "$OUT/Image.gz"
 
 # 5) Now that Module.symvers is complete, build the external module.

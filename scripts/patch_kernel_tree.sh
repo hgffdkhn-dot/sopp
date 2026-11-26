@@ -66,3 +66,101 @@ FT_DIR="$KDIR/drivers/input/touchscreen/focaltech_spi/include/firmware"
 mkdir -p "$FT_DIR"
 [ -f "$FT_DIR/fw_sample.i" ] || printf '/* s0ppSU CI stub: vendor firmware is in /vendor/firmware */\n' > "$FT_DIR/fw_sample.i"
 echo "patched: focaltech firmware stub created"
+
+# --- MTK DCM platform dispatch ------------------------------------------------
+# drivers/misc/mediatek/base/power/include/mtk_dcm.h only routes MT6739/6768/
+# 6765 to the generic dcm_v1 API; the MT6893/6885 support exists in
+# include/dcm_v1/ but is never selected, so the header ends in #error.
+python3 - "$KDIR/drivers/misc/mediatek/base/power/include/mtk_dcm.h" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8", errors="surrogateescape").read()
+old = ("#if defined(CONFIG_MACH_MT6739) \\\n"
+       "\t|| defined(CONFIG_MACH_MT6768) \\\n"
+       "\t|| defined(CONFIG_MACH_MT6765)")
+new = ("#if defined(CONFIG_MACH_MT6739) \\\n"
+       "\t|| defined(CONFIG_MACH_MT6768) \\\n"
+       "\t|| defined(CONFIG_MACH_MT6765) \\\n"
+       "\t|| defined(CONFIG_MACH_MT6893) \\\n"
+       "\t|| defined(CONFIG_MACH_MT6885)")
+if old not in s:
+    sys.stderr.write("WARN: mtk_dcm.h dispatch pattern not found\n")
+else:
+    s = s.replace(old, new, 1)
+    open(p, "w", encoding="utf-8", errors="surrogateescape").write(s)
+    print("patched: mtk_dcm.h now routes MT6893/MT6885")
+PY
+
+# --- bq2597x charge pump: remove floating point -------------------------------
+# The SC8551 branch multiplies the raw ADC code by a float LSB table inside a
+# kernel_neon section. arm64 builds every kernel object with
+# -mgeneral-regs-only, so clang rejects any floating point use outright, and
+# the flag has no -mno- counterpart. Every LSB in that table is an exact
+# multiple of 1/10000 (1.5625, 3.75, 5, 1.25, 1.2575, 3.125, 1.0), so the whole
+# conversion can be done in integer arithmetic with identical results.
+python3 - "$KDIR/drivers/power/supply/ti/bq2597x_charger.c" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8", errors="surrogateescape").read()
+
+old_table = """static float sc8551_adc_lsb[] = {
+	[ADC_IBUS]	= SC8551_IBUS_ADC_LSB,
+	[ADC_VBUS]	= SC8551_VBUS_ADC_LSB,
+	[ADC_VAC]	= SC8551_VAC_ADC_LSB,
+	[ADC_VOUT]	= SC8551_VOUT_ADC_LSB,
+	[ADC_VBAT]	= SC8551_VBAT_ADC_LSB,
+	[ADC_IBAT]	= SC8551_IBAT_ADC_LSB,
+	[ADC_TBUS]	= SC8551_TSBUS_ADC_LSB,
+	[ADC_TBAT]	= SC8551_TSBAT_ADC_LSB,
+	[ADC_TDIE]	= SC8551_TDIE_ADC_LSB,
+};"""
+
+new_table = """/* LSB values scaled by 10000 so the conversion stays integer-only. */
+static const int sc8551_adc_lsb_e4[] = {
+	[ADC_IBUS]	= 15625,
+	[ADC_VBUS]	= 37500,
+	[ADC_VAC]	= 50000,
+	[ADC_VOUT]	= 12500,
+	[ADC_VBAT]	= 12575,
+	[ADC_IBAT]	= 31250,
+	[ADC_TBUS]	= 10000,
+	[ADC_TBAT]	= 10000,
+	[ADC_TDIE]	= 10000,
+};"""
+
+old_use = """	if (bq->chip_vendor == SC8551) {
+		kernel_neon_begin();
+		*result = (int)(t * sc8551_adc_lsb[channel]);
+		kernel_neon_end();
+	}"""
+
+new_use = """	if (bq->chip_vendor == SC8551)
+		*result = (int)((t * (long long)sc8551_adc_lsb_e4[channel]) / 10000);"""
+
+for old, new, tag in ((old_table, new_table, "lsb table"),
+                      (old_use, new_use, "adc conversion")):
+    if old not in s:
+        sys.stderr.write("WARN: bq2597x %s pattern not found\n" % tag)
+    else:
+        s = s.replace(old, new, 1)
+
+open(p, "w", encoding="utf-8", errors="surrogateescape").write(s)
+print("patched: bq2597x SC8551 ADC path is integer-only")
+PY
+
+# --- lift the floating-point ban ---------------------------------------------
+# arch/arm64/Makefile adds -mgeneral-regs-only to every object so the compiler
+# never touches FP/SIMD registers (the kernel does not save them). A few vendor
+# drivers do use floating point, all of them inside kernel_neon_begin/end
+# sections, and clang rejects such files before the neon bracket can matter --
+# the flag has no negative form, so a per-file opt-out needs CFLAGS_REMOVE on
+# the exact Makefile that builds the object. Dropping it globally is equivalent
+# for everything else: code that uses no floating point emits no FP
+# instructions, so this only lifts the compile-time rejection.
+sed -i 's/^KBUILD_CFLAGS[[:space:]]*+=[[:space:]]*-mgeneral-regs-only[[:space:]]*$/KBUILD_CFLAGS +=/' \
+  "$KDIR/arch/arm64/Makefile"
+if grep -q '^-*KBUILD_CFLAGS.*mgeneral-regs-only' "$KDIR/arch/arm64/Makefile"; then
+  echo "WARN: -mgeneral-regs-only still present in arch/arm64/Makefile"
+else
+  echo "patched: removed global -mgeneral-regs-only"
+fi
