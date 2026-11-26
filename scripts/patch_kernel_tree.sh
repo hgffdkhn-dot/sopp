@@ -63,6 +63,28 @@ else
   echo "patched: CMDQ generation v2 (CONFIG_MTK_CMDQ_V3 unset)"
 fi
 
+# --- cmdq/v2 shipped without its engine header -------------------------------
+# cmdq/v2/cmdq_def.h ends with "#include \"cmdq_engine.h\"", but this OSS drop
+# only carries that file under cmdq/v3/<soc> -- a different generation whose enum
+# ladders conflict with v2's (CMDQ_GROUP_*). None of the identifiers the v2
+# header would provide are referenced by the v2 code paths MDP builds against
+# (MDP uses its own mdp_engine.h), so an empty shim restores the include graph
+# without dragging the other generation in.
+if [ -d "$KDIR/drivers/misc/mediatek/cmdq/v2" ]; then
+  ENG="$KDIR/drivers/misc/mediatek/cmdq/v2/cmdq_engine.h"
+  if [ ! -f "$ENG" ]; then
+    cat > "$ENG" <<'EOF'
+/* Provided by soppSU: the public OSS drop omits this file. See the build tree
+ * notes in scripts/patch_kernel_tree.sh -- v2 headers include it but none of its
+ * identifiers are used on the paths this kernel builds. */
+#ifndef __CMDQ_ENGINE_H__
+#define __CMDQ_ENGINE_H__
+#endif
+EOF
+    echo "patched: shim cmdq/v2/cmdq_engine.h for the incomplete OSS drop"
+  fi
+fi
+
 # --- one mtk_idle.h ----------------------------------------------------------
 # include/spm and include/spm_v4 both define the NOTIFY_*_IDLE event enum that
 # thermal's mtk_tc_wrapper.c switches on. spm_v4 is the generation matching this
