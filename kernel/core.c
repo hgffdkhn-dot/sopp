@@ -137,7 +137,16 @@ void sopp_escape_to_root(void)
 	memcpy(&cred->cap_ambient, &profile->capabilities.effective,
 	       sizeof(cred->cap_ambient));
 
-	current_thread_info()->flags &= ~(TIF_SECCOMP | _TIF_SECCOMP);
+	/*
+	 * Drop seccomp so a filtered process can exec a fresh shell. The thread
+	 * flag names are per-architecture -- arm64 defines TIF_SECCOMP, while the
+	 * _TIF_* aliases only exist on arches that generate them from the flag
+	 * list -- so touch the flags only when the name is actually present. The
+	 * seccomp struct is arch-independent and does the real work.
+	 */
+#ifdef TIF_SECCOMP
+	current_thread_info()->flags &= ~TIF_SECCOMP;
+#endif
 #ifdef CONFIG_SECCOMP
 	current->seccomp.mode = 0;
 	current->seccomp.filter = NULL;

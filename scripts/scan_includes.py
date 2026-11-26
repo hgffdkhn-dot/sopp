@@ -46,6 +46,18 @@ ANGLE = re.compile(r'^\s*#\s*include\s*<([^>\n]+\.h)>', re.M)
 QUOTE = re.compile(r'^\s*#\s*include\s*"([^"\n]+\.h)"', re.M)
 
 
+def clean(name):
+    """Strip the "./" some MTK headers put in front of local includes.
+
+    Without this the name keeps a slash and is treated as path-qualified, so
+    "./spmtwam_events.h" is looked up as that literal suffix, finds nothing and
+    silently disappears from the include list.
+    """
+    while name.startswith("./"):
+        name = name[2:]
+    return name
+
+
 def source_dirs(root, top):
     """Walk one top-level tree, pruning .git and the disabled subtree list."""
     base = os.path.join(root, top)
@@ -75,9 +87,9 @@ def main():
                 except OSError:
                     continue
                 for m in ANGLE.finditer(text):
-                    angles.setdefault(m.group(1), set()).add(d)
+                    angles.setdefault(clean(m.group(1)), set()).add(d)
                 for m in QUOTE.finditer(text):
-                    quotes.setdefault(m.group(1), set()).add(d)
+                    quotes.setdefault(clean(m.group(1)), set()).add(d)
 
     index = {}
     # For a path-qualified include the directory to add is the one containing
@@ -190,6 +202,16 @@ def main():
             pick = pref.pop() if len(pref) == 1 else closest(srcs, where)
             if pick:
                 glob_dirs.add(pick)
+
+    # Trace headers are never included by name in C source: include/trace/
+    # define_trace.h re-includes them through TRACE_INCLUDE_PATH(+".")+
+    # TRACE_INCLUDE_FILE, so the literal #include <spmtwam_events.h> exists only
+    # after macro expansion and the scan above cannot see it. Every MTK trace
+    # header follows the *_events.h naming, and a name that is unique in the tree
+    # is safe to expose globally.
+    for name, where in index.items():
+        if name.endswith("_events.h") and len(where) == 1:
+            glob_dirs |= where
 
     with open(glob_out, "w") as fh:
         fh.write("\n".join(sorted(glob_dirs)))

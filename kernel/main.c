@@ -36,16 +36,15 @@ bool sopp_queue_work(struct work_struct *work)
 }
 
 /*
- * Kernel release string. linux_banner is exported by every kernel; the
- * obvious init_utsname()->release is not usable from a module because it
- * dereferences init_uts_ns, which has no EXPORT_SYMBOL, so insmod would
- * fail at load time with an unresolved symbol.
+ * Kernel release string for the boot log. init_uts_ns is EXPORT_SYMBOL_GPL, so
+ * a GPL module may dereference it through init_utsname(). linux_banner is the
+ * tempting alternative and is wrong here: it is the one symbol in init/version.c
+ * with no EXPORT_SYMBOL at all, so referencing it links cleanly and then fails
+ * at insmod with an unresolved symbol.
  */
-extern const char linux_banner[];
-
 static int __init sopp_init(void)
 {
-	pr_info("soppSU: booting on %s", linux_banner);
+	pr_info("soppSU: booting on %s", init_utsname()->release);
 
 	sopp_wq = alloc_ordered_workqueue("soppsu_wq", WQ_UNBOUND);
 	if (!sopp_wq)

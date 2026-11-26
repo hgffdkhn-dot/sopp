@@ -10,6 +10,7 @@
  */
 #include <linux/cred.h>
 #include <linux/err.h>
+#include <linux/printk.h>
 #include <linux/security.h>
 #include <linux/slab.h>
 #include <linux/string.h>

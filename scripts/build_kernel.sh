@@ -125,9 +125,31 @@ bash "$REPO/scripts/patch_kernel_tree.sh" "$KDIR"
 # -k keeps going after the first failing object so one CI run surfaces every
 # remaining incompatibility instead of one per round trip.
 make ARCH=arm64 $CROSS -j"$(nproc)" modules_prepare
-make ARCH=arm64 $CROSS -j"$(nproc)" -k Image.gz || true
+make ARCH=arm64 $CROSS -j"$(nproc)" -k Image.gz 2>&1 | tee /tmp/kernel-build.log || true
+
+# Summarise instead of making the reader scroll 12k lines: the same handful of
+# causes usually accounts for every error, and a unique-name count is what
+# distinguishes "300 errors" from "1 mistake repeated 300 times".
+if [ -f /tmp/kernel-build.log ]; then
+  echo "=== error classes ==="
+  grep -o 'error: .*' /tmp/kernel-build.log | sed 's/‘[^’]*’/X/g' \
+    | sort | uniq -c | sort -rn | head -15
+  echo "=== unresolved headers ==="
+  grep 'fatal error: .*No such file' /tmp/kernel-build.log | sed 's/.*fatal error: //' \
+    | sort -u | head -20
+  echo "=== total errors: $(grep -c 'error:' /tmp/kernel-build.log) ==="
+fi
+
 if [ ! -f arch/arm64/boot/Image.gz ]; then
   echo "ERROR: kernel image was not produced (see errors above)"
+  # Ground truth for the include-order fights: the full clang invocation for one
+  # file that failed, so the -I order is visible instead of inferred.
+  if grep -q 'lpm/platform/mtk_lpm_trace' /tmp/kernel-build.log 2>/dev/null; then
+    echo "=== include order for mtk_lpm_trace.o ==="
+    make ARCH=arm64 $CROSS V=1 \
+      drivers/misc/mediatek/lpm/platform/mtk_lpm_trace.o 2>&1 \
+      | grep -m1 -o 'clang-14[^&]*' | tr ' ' '\n' | grep '^-I' || true
+  fi
   exit 1
 fi
 cp arch/arm64/boot/Image.gz "$OUT/Image.gz"

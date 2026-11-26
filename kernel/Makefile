@@ -20,8 +20,12 @@ SOPP_MANAGER_PACKAGE := com.sopp.su
 endif
 ccflags-y += -DSOPP_MANAGER_PACKAGE=\"$(SOPP_MANAGER_PACKAGE)\"
 
-# path_umount() was introduced in 5.9; non-GKI 4.14 kernels lack it.
-ifneq ($(shell grep -q "int path_umount" $(srctree)/fs/namespace.c; echo $$?),1)
+# path_umount() was introduced in 5.9. Grepping the source is not enough: some
+# vendor 4.14 trees carry a private copy that is not EXPORT_SYMBOL'd, and calling
+# it would only fail later at insmod with a misleading ENOENT. Check what the
+# kernel actually exports.
+SOPP_PATH_UMOUNT := $(shell grep -qw path_umount $(objtree)/Module.symvers 2>/dev/null && echo y)
+ifeq ($(SOPP_PATH_UMOUNT),y)
 ccflags-y += -DSOPP_HAS_PATH_UMOUNT
 endif
 

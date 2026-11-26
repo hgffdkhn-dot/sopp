@@ -46,6 +46,72 @@ if [ -n "$GPU_VENDOR" ]; then
   done
 fi
 
+# --- keep one CMDQ generation ------------------------------------------------
+# cmdq/v2 and cmdq/v3 both define enum CMDQ_GROUP_ENUM, struct cmdqCommandStruct
+# and the whole cmdqCore* surface, with different layouts. The tree configured
+# here has a v3/<SoC> directory (mt6885, the family this part belongs to) and the
+# MDP driver includes v3's cmdq_engine.h, so v2 is the copy that must go: leaving
+# it on any include path produces ~250 "redeclaration of enumerator" and
+# "conflicting types" errors inside mdp. Note the tree's own Makefile builds
+# neither generation for mt6885, so v2 has no build of its own to preserve.
+CMDQ="$KDIR/drivers/misc/mediatek/cmdq"
+MTK_PLATFORM=$(sed -n 's/^CONFIG_MTK_PLATFORM="\(.*\)"/\1/p' "$KDIR/.config" 2>/dev/null | head -1)
+if [ -d "$CMDQ/v2" ] && [ -n "$MTK_PLATFORM" ] && [ -d "$CMDQ/v3/$MTK_PLATFORM" ]; then
+  rm -rf "$CMDQ/v2"
+  echo "patched: dropped legacy cmdq/v2 (this SoC uses cmdq/v3/$MTK_PLATFORM)"
+fi
+
+# --- keep one watchdog generation --------------------------------------------
+# Both generations ship a header called mtk_wdt.h, so an angle-bracket include
+# from wdt_v2/ can land on wdt_v1/'s copy. The Kconfig choice is authoritative
+# about which one this kernel builds.
+WDT="$KDIR/drivers/watchdog/mediatek/wdt/common"
+if grep -q '^CONFIG_MTK_WATCHDOG_COMMON_V2=y' "$KDIR/.config" 2>/dev/null; then
+  rm -rf "$WDT/wdt_v1"
+  echo "patched: watchdog generation: v2"
+elif grep -q '^CONFIG_MTK_WATCHDOG_COMMON_V1=y' "$KDIR/.config" 2>/dev/null; then
+  rm -rf "$WDT/wdt_v2"
+  echo "patched: watchdog generation: v1"
+fi
+
+# --- keep one imgsensor generation -------------------------------------------
+# common/v1 (legacy) and common/v1_1 both provide imgsensor.h, imgsensor_hw.h and
+# so on. v1's copy includes imgsensor_clk.h, a header this OSS drop does not ship
+# at all, so any object that resolves to v1 fails outright. Decide by evidence:
+# the sensors named in CONFIG_CUSTOM_KERNEL_IMGSENSOR identify the generation the
+# device was actually built with.
+IMGS="$KDIR/drivers/misc/mediatek/imgsensor/src/common"
+SENSORS=$(sed -n 's/^CONFIG_CUSTOM_KERNEL_IMGSENSOR="\(.*\)"/\1/p' "$KDIR/.config" 2>/dev/null | head -1)
+if [ -n "$SENSORS" ] && [ -d "$IMGS/v1" ] && [ -d "$IMGS/v1_1" ]; then
+  in_new=0
+  in_old=0
+  for s in $SENSORS; do
+    [ -d "$IMGS/v1_1/$s" ] && in_new=$((in_new + 1))
+    [ -d "$IMGS/v1/$s" ] && in_old=$((in_old + 1))
+  done
+  if [ "$in_new" -gt "$in_old" ]; then
+    rm -rf "$IMGS/v1"
+    echo "patched: imgsensor generation: v1_1 ($in_new of the configured sensors live there, $in_old in v1)"
+  fi
+fi
+
+# --- drop headers whose owners are not part of this build --------------------
+# mtk_lp_kernfs.h exists three times. lpm/mtk_lpm_fs is the copy this kernel
+# builds; base/power/spm_v4 and base/power/spm/common/mtk_idle_fs are the older
+# SPM stacks, and neither is referenced by any Makefile here (no object in either
+# tree is ever compiled). Their copies are pure include-path poison: whichever
+# -I comes first wins, and lpm expects the six-argument prototype while spm_v4
+# declares a one-argument one.
+for dead in \
+  drivers/misc/mediatek/base/power/spm_v4/mtk_lp_kernfs.h \
+  drivers/misc/mediatek/base/power/spm/common/mtk_idle_fs/mtk_lp_kernfs.h
+do
+  if [ -f "$KDIR/$dead" ]; then
+    rm -f "$KDIR/$dead"
+    echo "patched: removed unbuilt duplicate $dead"
+  fi
+done
+
 # --- neutralise the unused Trustonic TEE stack --------------------------------
 # The device runs MicroTrust (CONFIG_MICROTRUST_TEE_SUPPORT=y), so gud/ is dead
 # code -- but it cannot simply be deleted: drivers/misc/mediatek/Kconfig sources
@@ -72,6 +138,18 @@ if [ "$PHASE" = prune ]; then
   echo "patched: prune phase complete"
   exit 0
 fi
+
+# --- pseudo_m4u: ARM32-only dma-iommu header ---------------------------------
+# arch/arm64 dropped asm/dma-iommu.h in 4.11 together with the arm_iommu_* API;
+# only arch/arm still ships it. pseudo_m4u includes it and uses exactly one thing
+# from it, ARM_MAPPING_ERROR, so carry that macro locally instead of pulling the
+# 32-bit header in.
+for f in "$KDIR"/drivers/misc/mediatek/pseudo_m4u/*.c; do
+  [ -f "$f" ] || continue
+  grep -q '<asm/dma-iommu.h>' "$f" || continue
+  perl -0pi -e 's{#include <asm/dma-iommu\.h>}{/* arch/arm64 has no asm/dma-iommu.h; only this macro is used. */\n#ifndef ARM_MAPPING_ERROR\n#define ARM_MAPPING_ERROR\t\t(~(dma_addr_t)0x0)\n#endif}' "$f"
+  echo "patched: $(basename "$f") no longer needs the ARM32 dma-iommu.h"
+done
 
 # --- modern-clang tolerance ---------------------------------------------------
 # Modern Clang emits style/format warnings that this 2019 tree turns into
