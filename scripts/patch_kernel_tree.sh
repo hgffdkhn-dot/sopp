@@ -46,43 +46,28 @@ if [ -n "$GPU_VENDOR" ]; then
   done
 fi
 
-# --- keep one CMDQ generation ------------------------------------------------
-# cmdq/v2 and cmdq/v3 both define enum CMDQ_GROUP_ENUM and the cmdqCore*
-# surface, so exactly one may be visible: whichever generation the kernel is
-# configured for. This tree leaves CONFIG_MTK_CMDQ_V3 unset, and mdp/mdp_def.h
-# carries its own copies of the structures v3 also defines (with no guard for
-# it), so v3 is the copy that breaks MDP with ~250 "redeclaration of enumerator"
-# and "redefinition of struct SubsysStruct" errors.
+# --- cmdq: keep only the generation this kernel actually builds ---------------
+# Three cmdq implementations live side by side, all defining CMDQ_GROUP_ENUM,
+# struct cmdqCommandStruct and the cmdqCore* surface:
+#   * cmdq/v2       legacy core driver   (CONFIG_MTK_CMDQ, old SoCs)
+#   * cmdq/v3       per-SoC core driver  (CONFIG_MTK_CMDQ_V3)
+#   * cmdq/mailbox  mailbox client       (CONFIG_MTK_CMDQ_MBOX_EXT, this device)
+# mdp/Makefile adds exactly one of them, and for CONFIG_MTK_CMDQ_MBOX_EXT it adds
+# none -- because mdp ships its own complete copies of the cmdq headers it needs
+# (mdp/cmdq_reg.h, cmdq_subsys_common.h, mdp_cmdq_helper_ext.h). Leaving v2 or v3
+# reachable puts a second definition of each of those structures on the include
+# path, and MDP stops compiling.
 CMDQ="$KDIR/drivers/misc/mediatek/cmdq"
 MTK_PLATFORM=$(sed -n 's/^CONFIG_MTK_PLATFORM="\(.*\)"/\1/p' "$KDIR/.config" 2>/dev/null | head -1)
 if grep -q '^CONFIG_MTK_CMDQ_V3=y' "$KDIR/.config" 2>/dev/null; then
   rm -rf "$CMDQ/v2"
-  echo "patched: CMDQ generation v3 (CONFIG_MTK_CMDQ_V3=y)"
+  echo "patched: cmdq: kept v3 (CONFIG_MTK_CMDQ_V3=y)"
+elif grep -q '^CONFIG_MTK_CMDQ_MBOX_EXT=y' "$KDIR/.config" 2>/dev/null; then
+  rm -rf "$CMDQ/v2" "$CMDQ/v3"
+  echo "patched: cmdq: kept the mailbox client only (MDP carries its own headers)"
 else
   rm -rf "$CMDQ/v3"
-  echo "patched: CMDQ generation v2 (CONFIG_MTK_CMDQ_V3 unset)"
-fi
-
-# --- cmdq/v2 shipped without its engine header -------------------------------
-# cmdq/v2/cmdq_def.h ends with "#include \"cmdq_engine.h\"", but this OSS drop
-# only carries that file under cmdq/v3/<soc> -- a different generation whose enum
-# ladders conflict with v2's (CMDQ_GROUP_*). None of the identifiers the v2
-# header would provide are referenced by the v2 code paths MDP builds against
-# (MDP uses its own mdp_engine.h), so an empty shim restores the include graph
-# without dragging the other generation in.
-if [ -d "$KDIR/drivers/misc/mediatek/cmdq/v2" ]; then
-  ENG="$KDIR/drivers/misc/mediatek/cmdq/v2/cmdq_engine.h"
-  if [ ! -f "$ENG" ]; then
-    cat > "$ENG" <<'EOF'
-/* Provided by soppSU: the public OSS drop omits this file. See the build tree
- * notes in scripts/patch_kernel_tree.sh -- v2 headers include it but none of its
- * identifiers are used on the paths this kernel builds. */
-#ifndef __CMDQ_ENGINE_H__
-#define __CMDQ_ENGINE_H__
-#endif
-EOF
-    echo "patched: shim cmdq/v2/cmdq_engine.h for the incomplete OSS drop"
-  fi
+  echo "patched: cmdq: kept v2"
 fi
 
 # --- one mtk_idle.h ----------------------------------------------------------
